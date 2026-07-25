@@ -122,60 +122,58 @@ RSpec.describe CruIap::TokenVerifier do
       expect(result.email).to eq("alice@cru.org")
     end
 
-    it "strips an accounts.google.com: namespace prefix (WIF)" do
+    it "strips a namespace prefix off the email claim" do
       result = verify(returns: payload.merge("email" => "accounts.google.com:Alice@cru.org"))
       expect(result.email).to eq("alice@cru.org")
     end
 
-    it "unwraps a workforce principal URI to its subject email (the live beacon-stage shape)" do
-      result = verify(returns: payload.merge(
-        "email" => "principal://iam.googleapis.com/locations/global/workforcePools/beacon-stage/subject/Alice@cru.org"
-      ))
-      expect(result).to be_ok
-      expect(result.email).to eq("alice@cru.org")
-    end
+    # The three payloads below are the shapes IAP actually emits, confirmed
+    # 2026-07-24 from a captured live payload (keep-zero POC echoserver) and
+    # beacon-stage's Datadog logs on both sides of the cru-terraform
+    # google.email attribute-mapping fix. They are the regression protection
+    # against anyone reintroducing a `sub` fallback.
 
-    it "percent-decodes the workforce principal subject" do
-      result = verify(returns: payload.merge(
-        "email" => "principal://iam.googleapis.com/locations/global/workforcePools/beacon-stage/subject/alice%40cru.org"
-      ))
-      expect(result).to be_ok
-      expect(result.email).to eq("alice@cru.org")
-    end
-
-    it "falls back to sub when email is absent (the live workforce JWT has no email claim)" do
-      result = verify(returns: payload.reject { |k, _| k == "email" }.merge(
-        "sub" => "principal://iam.googleapis.com/locations/global/workforcePools/beacon-stage/subject/Alice@cru.org"
-      ))
-      expect(result).to be_ok
-      expect(result.email).to eq("alice@cru.org")
-    end
-
-    it "falls back to sub when email is present but blank" do
-      result = verify(returns: payload.merge("email" => "", "sub" => "accounts.google.com:bob@cru.org"))
-      expect(result).to be_ok
-      expect(result.email).to eq("bob@cru.org")
-    end
-
-    it "prefers the email claim over sub when both are present" do
-      result = verify(returns: payload.merge("sub" => "accounts.google.com:other@cru.org"))
-      expect(result.email).to eq("alice@cru.org")
-    end
-
-    it "uses email for a plain (non-WIF) IAP payload, whose sub is a numeric Google id" do
-      # The realistic plain-IAP shape. If the preference order ever flipped,
-      # this would resolve to the numeric id and reject — so it guards the
-      # ordering, not just the happy path.
+    it "accepts a real plain-IAP payload, whose sub is an opaque Google id" do
       result = verify(returns: payload.merge("sub" => "accounts.google.com:104291823410293841029"))
       expect(result).to be_ok
       expect(result.email).to eq("alice@cru.org")
     end
 
-    it "rejects rather than accepting a numeric Google id if email is absent" do
-      result = verify(returns: payload.reject { |k, _| k == "email" }
-        .merge("sub" => "accounts.google.com:104291823410293841029"))
+    it "accepts a real WIF payload and ignores the nested workforce_identity claim" do
+      # The principal:// URI IS real — but it lives here, in a nested claim
+      # that is the string IAM bindings match. It is not an identity claim,
+      # and the verifier must not read it.
+      result = verify(returns: payload.merge(
+        "email" => "matt.drees@cru.org",
+        "sub" => "sts.google.com:AAFTZtsl9PtVMy-6qd9Otvue",
+        "identity_source" => "WORKFORCE_IDENTITY",
+        "workforce_identity" => {
+          "iam_principal" => "principal://iam.googleapis.com/locations/global/" \
+                             "workforcePools/keepzero-okta-poc/subject/matt.drees@cru.org",
+          "workforce_pool_name" => "locations/global/workforcePools/keepzero-okta-poc"
+        }
+      ))
+      expect(result).to be_ok
+      expect(result.email).to eq("matt.drees@cru.org")
+    end
+
+    it "rejects a real unmapped-pool WIF payload as missing_email, not malformed_subject" do
+      # A pool whose provider lacks the google.email attribute mapping. The
+      # reason matters: missing_email says "go fix the pool", which is the
+      # actual remedy. Falling back to the opaque sub would report
+      # malformed_subject and send the next person hunting a principal shape
+      # that does not exist. Beacon shipped that mistake in 2026-07.
+      result = verify(returns: payload.reject { |k, _| k == "email" }.merge(
+        "sub" => "sts.google.com:AAFTZtu0MfYynk2IJw-wF3TK8eiNjDbtCiPAMAdnsNacElMHCsyo5"
+      ))
       expect(result).not_to be_ok
-      expect(result.reason).to eq("malformed_subject")
+      expect(result.reason).to eq("missing_email")
+    end
+
+    it "ignores sub entirely when the email claim is blank" do
+      result = verify(returns: payload.merge("email" => "", "sub" => "accounts.google.com:bob@cru.org"))
+      expect(result).not_to be_ok
+      expect(result.reason).to eq("missing_email")
     end
 
     it "leaves a bare email untouched (no colon → no prefix)" do
@@ -196,30 +194,46 @@ RSpec.describe CruIap::TokenVerifier do
   end
 
   describe "identity rejection" do
-    it "rejects missing_email when both email and sub are absent" do
+    it "rejects missing_email when the email claim is absent" do
       result = verify(returns: payload.reject { |k, _| k == "email" })
       expect(result).not_to be_ok
       expect(result.reason).to eq("missing_email")
     end
 
-    it "rejects a workforce principal whose subject is not email-shaped" do
+    # A principal:// URI is not a shape IAP puts in the email claim — it
+    # belongs to workforce_identity.iam_principal. These cover it as junk
+    # input, and pin that it REJECTS. An earlier version of this gem unwrapped
+    # it and accepted, which would persist a garbage user row.
+    it "rejects a principal:// URI in the email claim rather than unwrapping it" do
       result = verify(returns: payload.merge(
-        "email" => "principal://iam.googleapis.com/locations/global/workforcePools/beacon-stage/subject/opaque-id-123"
+        "email" => "principal://iam.googleapis.com/locations/global/workforcePools/beacon-stage/subject/alice@cru.org"
       ))
+      expect(result).not_to be_ok
       expect(result.reason).to eq("malformed_subject")
     end
 
-    it "rejects a workforce GROUP principalSet rather than treating it as a user" do
+    it "rejects a principalSet:// group binding in the email claim" do
       result = verify(returns: payload.merge(
         "email" => "principalSet://iam.googleapis.com/locations/global/workforcePools/beacon-stage/group/beacon-users"
       ))
       expect(result.reason).to eq("malformed_subject")
     end
 
-    it "rejects a colon-bearing subject that isn't email-shaped after prefix stripping" do
+    it "rejects a slash-bearing value even though EMAIL_REGEXP alone accepts it" do
+      # RFC 5322 permits "/" in a local part, so URI::MailTo::EMAIL_REGEXP
+      # matches this string in full — the extra NEVER_IN_AN_EMAIL gate is the
+      # only thing stopping it becoming a user row.
+      value = "//iam.googleapis.com/locations/global/subject/alice@cru.org"
+      expect(value).to match(URI::MailTo::EMAIL_REGEXP) # the trap
+      result = verify(returns: payload.merge("email" => value))
+      expect(result).not_to be_ok
+      expect(result.reason).to eq("malformed_subject")
+    end
+
+    it "rejects a colon-bearing value that isn't email-shaped after prefix stripping" do
       # Prefix stripping yields "//pool/x" — must not be persisted as a user
-      # row. Distinct reason from missing_email: an unanticipated WIF
-      # principal shape, not an Okta attribute-mapping gap.
+      # row. Distinct reason from missing_email: something arrived that isn't
+      # an address, vs. nothing arriving at all.
       result = verify(returns: payload.merge("email" => "principal://pool/x"))
       expect(result.reason).to eq("malformed_subject")
     end
