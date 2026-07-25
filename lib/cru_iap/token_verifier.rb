@@ -1,4 +1,3 @@
-require "cgi"
 require "json"
 require "uri"
 require "googleauth/id_tokens"
@@ -25,8 +24,8 @@ module CruIap
   #      manually anyway — belt-and-braces, so a future gem bump that loosens
   #      the default can't silently widen who we trust.
   #
-  #   4. Extract identity — see identity_claim for why `email` comes first and
-  #      `sub` is the fallback.
+  #   4. Extract identity from the `email` claim — and only that claim. See
+  #      normalize_email for the evidence on why `sub` is never an identity.
   #
   # Returns a Result (ok? + reason for telemetry/logging + email/name). The
   # caller decides what ok? means — upsert and sign in, or treat the request as
@@ -46,6 +45,15 @@ module CruIap
     # The same header as Rack normalizes it into env.
     RACK_ENV_KEY = "HTTP_X_GOOG_IAP_JWT_ASSERTION".freeze
 
+    # URI::MailTo::EMAIL_REGEXP alone is not a sufficient shape gate. RFC 5322
+    # permits "/" in a local part, so a URI-shaped value ending in an address
+    # — e.g. "principal://iam.googleapis.com/.../subject/alice@cru.org" —
+    # MATCHES it, and would be persisted as a user whose email is that entire
+    # string. No real Okta or Google identity contains a slash or a backslash,
+    # so treat either as proof we are looking at a URI or principal rather
+    # than an address.
+    NEVER_IN_AN_EMAIL = %r{[/\\]}
+
     # The reason vocabulary, so every app behind IAP files the same Datadog
     # queries. Entries ending in ":" carry a variable suffix.
     REASONS = [
@@ -62,14 +70,6 @@ module CruIap
       "unexpected_error",         # fail-closed catch-all
       "iap_jwt"                   # the only ok? == true reason
     ].freeze
-
-    # The WIF principal URI shape IAP puts in the identity claim for
-    # workforce-federated identities. The subject segment is the pool's
-    # google.subject mapping — Cru's pools map it to the Okta email
-    # (cru-terraform workforce.tf). Percent-encoded by IAP, hence the
-    # CGI.unescape when unwrapping.
-    WORKFORCE_PRINCIPAL =
-      %r{\Aprincipal://iam\.googleapis\.com/locations/[^/]+/workforcePools/[^/]+/subject/(?<subject>.+)\z}
 
     # Preferred entry point: pulls the assertion off the request itself, so
     # application code never has to name the header.
@@ -110,14 +110,14 @@ module CruIap
       iss = payload["iss"].to_s
       return Result.new(ok: false, reason: "bad_iss:#{iss}") unless iss == IAP_ISSUER
 
-      email = normalize_email(identity_claim(payload))
-      # Two distinct failure reasons on purpose: both claims absent = an
-      # IAP/pool config gap (usually a missing google.email attribute
-      # mapping); present-but-not-email-shaped = a principal shape we didn't
-      # anticipate. Different fixes — keep them distinguishable.
+      email = normalize_email(payload["email"])
+      # Two distinct failure reasons on purpose. `missing_email` = the pool
+      # never sent one, which is an infrastructure fix (see the comment on
+      # normalize_email). `malformed_subject` = something arrived that isn't
+      # an address. Different fixes — keep them distinguishable in Datadog.
       return Result.new(ok: false, reason: "missing_email") if blank?(email)
 
-      unless email.match?(URI::MailTo::EMAIL_REGEXP)
+      if !email.match?(URI::MailTo::EMAIL_REGEXP) || email.match?(NEVER_IN_AN_EMAIL)
         # Log the raw claims so a rejection is diagnosable without
         # re-deploying instrumentation. Identity claims, not credentials —
         # same sensitivity as the emails already in request logs. (The 2026-07
@@ -148,50 +148,48 @@ module CruIap
 
     private
 
-    # `email` first, `sub` as the fallback. Both directions matter, for
-    # different IAP modes:
+    # `email` is the identity in every IAP mode. `sub` is NEVER an identity —
+    # it is an opaque namespaced token — so this deliberately does not read
+    # it. Confirmed 2026-07-24 against a captured live payload (keep-zero POC
+    # echoserver) plus beacon-stage's Datadog logs on both sides of the
+    # cru-terraform google.email mapping fix:
     #
-    #   - Plain IAP (Google/Cloud Identity accounts, no federation): `email`
-    #     is present and is the identity. `sub` is
-    #     "accounts.google.com:<numeric id>" — useless as an identity, and it
-    #     correctly falls out as malformed_subject if we ever reach it.
+    #   mode                       email                sub
+    #   -------------------------- -------------------- -----------------------------
+    #   plain IAP (Google id)      bare address         accounts.google.com:<opaque>
+    #   WIF, google.email mapped   bare address         sts.google.com:<opaque STS>
+    #   WIF, mapping absent        ABSENT               sts.google.com:<opaque STS>
     #
-    #   - Workforce Identity Federation: the JWT beacon-stage actually
-    #     receives has NO `email` claim at all, and the identity is `sub`, a
-    #     workforce principal URI whose subject segment is the pool's
-    #     google.subject mapping (Cru maps it to the Okta email).
+    # The third row is a broken pool, and no app-side fallback can recover an
+    # address from it — `sub` carries none. Reaching for `sub` there buys
+    # nothing and costs diagnosis: it turns an accurate `missing_email`
+    # (= go fix the pool's attribute_mapping) into a misleading
+    # `malformed_subject` (= we saw a principal shape we don't understand).
+    # Beacon shipped exactly that fallback during the 2026-07 cutover and it
+    # muddied the logs; don't reintroduce it.
     #
-    # So this is not dead code in either direction — it's the one ordering
-    # that serves both modes.
-    def identity_claim(payload)
-      email = payload["email"]
-      blank?(email.to_s) ? payload["sub"] : email
-    end
-
-    # Unwrap the two namespaced principal shapes IAP produces:
+    # NB the workforce principal URI ("principal://iam.googleapis.com/.../
+    # subject/<email>") IS real, but it lives in the nested
+    # `workforce_identity.iam_principal` claim — it is the string IAM
+    # bindings match, not an identity claim, and it never appears in `email`
+    # or `sub`. A verifier that unwraps it out of those is handling a shape
+    # IAP does not emit, and worse, is ACCEPTING a value it would otherwise
+    # correctly reject.
     #
-    # 1. The workforce principal URI (the shape beacon-stage receives):
-    #    "principal://iam.googleapis.com/.../subject/<email>". Must be checked
-    #    FIRST — it contains colons, so the generic prefix-strip below would
-    #    mangle it to "//iam.googleapis.com/…".
-    # 2. An identity-source prefix, e.g. "accounts.google.com:alice@cru.org".
-    #    A real email never contains a colon, so a leading "<prefix>:" is
-    #    always the IAP namespace — split on the first colon, keep the rest.
+    # Strip a leading "<prefix>:" namespace before validating: a real email
+    # never contains a colon, so the first colon is always the IAP namespace.
+    # Observed prefixes are "accounts.google.com:", "sts.google.com:", and
+    # Identity Platform's "securetoken.google.com/<project>/<tenant>:" —
+    # split on the first colon rather than matching any literal prefix.
     #
     # Then downcase, to match the usual citext/lowercased email column.
     #
     # Shape validation happens in `call` (malformed_subject): callers
-    # generally persist whatever we hand back, so an unwrapped value that
-    # still isn't email-shaped (group principalSets, unexpected pool paths,
-    # opaque or numeric subjects) must reject rather than become a garbage
-    # user row.
+    # generally persist whatever we hand back, so a value that isn't
+    # email-shaped must reject rather than become a garbage user row.
     def normalize_email(raw)
       email = raw.to_s.strip
-      if (workforce = email.match(WORKFORCE_PRINCIPAL))
-        email = CGI.unescape(workforce[:subject])
-      elsif email.include?(":")
-        email = email.split(":", 2).last
-      end
+      email = email.split(":", 2).last if email.include?(":")
       email.to_s.downcase
     end
 

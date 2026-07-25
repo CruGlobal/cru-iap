@@ -129,37 +129,59 @@ end
 
 Notes from beacon's cutover, kept here because they cost real deploy cycles:
 
-1. **The identity claim differs by IAP mode, so the verifier reads both.**
+1. **`email` is the identity in every mode. `sub` never is.** Confirmed 2026-07-24
+   from a captured live payload (keep-zero POC echoserver) and from beacon-stage logs
+   on both sides of the attribute-mapping fix:
 
    | | `email` claim | `sub` claim |
    |---|---|---|
-   | Plain IAP (Google/Cloud Identity) | the identity | `accounts.google.com:<numeric id>` — useless |
-   | WIF (what beacon-stage receives) | **absent entirely** | `principal://iam.googleapis.com/locations/global/workforcePools/<pool>/subject/<email>` |
+   | Plain IAP (Google/Cloud Identity) | bare address, no prefix | `accounts.google.com:<opaque id>` |
+   | WIF, `google.email` mapped | bare address | `sts.google.com:<opaque STS token>` |
+   | WIF, mapping absent | **absent entirely** | `sts.google.com:<opaque STS token>` |
 
-   Hence `email` first, `sub` as fallback: that single ordering is correct in both
-   modes. In plain-IAP mode a fallback to `sub` would yield a numeric string, which
-   fails the email-shape gate and rejects — the right outcome.
+   There is no mode in which `sub` yields a usable identity, so a `sub` fallback buys
+   nothing and costs diagnostic clarity — see the next item.
 
-2. **A workforce JWT missing its identity entirely usually means a missing
-   `google.email` attribute mapping** on the pool provider. Fix the pool rather than
-   leaning on the fallback.
+2. **A workforce JWT with no `email` means a missing `google.email` attribute
+   mapping** on the pool provider (and upstream of that, a missing `email` attribute
+   statement on the Okta app). Nothing app-side can recover the address — `sub`
+   carries none. Report it as `missing_email`, which names the actual remedy. Beacon
+   shipped a `sub` fallback during its cutover and it downgraded that accurate
+   diagnosis into a misleading `malformed_subject`, sending the next reader hunting a
+   principal shape that does not exist.
 
-   ⚠️ **Unverified:** whether a workforce pool *with* `google.email` correctly mapped
-   then emits an `email` claim in the IAP JWT. Beacon has never run that
-   configuration — every observation above comes from a pool without the mapping. If
-   you get a correctly-mapped pool working, please confirm or correct this line.
-3. **Unwrap the workforce URI before the generic `prefix:` split.** The URI contains
-   colons; splitting first mangles it to `//iam.googleapis.com/…`.
-4. **The subject is percent-encoded** — `alice%40cru.org`.
-5. **Reject anything not email-shaped after unwrapping** (`malformed_subject`), and
-   keep that reason distinct from `missing_email`. Different root causes, different
-   fixes: a pool attribute-mapping gap vs. an unanticipated principal shape (group
-   `principalSet://`, opaque subjects). Without the shape gate you persist garbage
-   user rows.
-6. **Fail closed when `IAP_AUDIENCE` is unset** rather than skipping the audience
+3. **`principal://…` is NOT in `email` or `sub`.** The workforce principal URI is
+   real, but it lives in the nested `workforce_identity.iam_principal` claim — it is
+   the string IAM bindings match, not an identity. A verifier that unwraps it out of
+   `email`/`sub` is handling a shape IAP never emits, and is *accepting* a value it
+   would otherwise correctly reject. The WIF payload also carries
+   `identity_source: "WORKFORCE_IDENTITY"` if you need to branch on federated vs.
+   Google sessions.
+
+4. **Split on the first colon; never match a literal prefix.** A real email never
+   contains one, so a leading `<prefix>:` is always the IAP namespace. Observed
+   prefixes: `accounts.google.com:`, `sts.google.com:`, and Identity Platform's
+   `securetoken.google.com/<project>/<tenant>:`.
+
+5. **`URI::MailTo::EMAIL_REGEXP` is not a sufficient shape gate on its own.** RFC 5322
+   permits `/` in a local part, so a URI-shaped value ending in an address —
+   `principal://iam.googleapis.com/.../subject/alice@cru.org` — *matches* it, and
+   would be persisted as a user whose email is that entire string. Reject anything
+   containing a slash as well.
+
+6. **Keep `malformed_subject` and `missing_email` distinct.** Nothing arrived, vs.
+   something arrived that is not an address: different root causes, different fixes.
+
+7. **Fail closed when `IAP_AUDIENCE` is unset** rather than skipping the audience
    check.
-7. **Load-balancer 302s masquerade as Rails redirects** when you're reading logs
+
+8. **Load-balancer 302s masquerade as Rails redirects** when you are reading logs
    during a cutover. Check which layer actually issued them.
+
+9. **Get logs flowing before you theorize.** Two of the wrong turns above were guesses
+   written while Rails stdout was not reaching Datadog at all — the commit claiming a
+   shape was "observed live" predated log visibility by 25 minutes. Fixing the
+   telemetry is cheaper than a deploy cycle.
 
 ## Rejection reasons
 
