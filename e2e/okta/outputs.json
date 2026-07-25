@@ -1,0 +1,43 @@
+{
+  "_comment": "Scratch Okta OIDC app for cru-iap e2e workforce-identity testing. Disposable. See README.md for teardown.",
+  "okta_org_url": "https://cru.oktapreview.com",
+  "okta_admin_url": "https://cru-admin.oktapreview.com",
+  "issuer_uri": "https://cru.oktapreview.com",
+  "discovery_uri": "https://cru.oktapreview.com/.well-known/openid-configuration",
+  "jwks_uri": "https://cru.oktapreview.com/oauth2/v1/keys",
+  "client_id": "0oa2sr4z1rqhbB3Go0h8",
+  "workforce_pool_id": "cru-iap-e2e",
+  "workforce_pool_provider_id": "okta",
+  "workforce_pool_location": "global",
+  "redirect_uri": "https://auth.cloud.google/signin-callback/locations/global/workforcePools/cru-iap-e2e/providers/okta",
+  "web_sso_additional_scopes": [
+    "email",
+    "profile"
+  ],
+  "web_sso_response_type": "CODE",
+  "web_sso_assertion_claims_behavior": "MERGE_USER_INFO_OVER_ID_TOKEN_CLAIMS",
+  "attribute_mapping": {
+    "google.subject": "assertion.subject",
+    "google.email": "assertion.attributes['email'][0] if 'email' in assertion.attributes else assertion.subject",
+    "google.display_name": "assertion.attributes['name'][0] if 'name' in assertion.attributes else assertion.subject"
+  },
+  "okta_app_id": "0oa2sr4z1rqhbB3Go0h8",
+  "okta_app_label": "ZZ TEMP cru-iap e2e (delete me)",
+  "okta_app_access_policy_id": "rst2sr4to4fCkAGMI0h8",
+  "okta_app_access_policy_rule_id": "rul2sr4to4gQb4RzB0h8",
+  "okta_app_policy_mapping_id": "rsm2sr53l0dqnJiwj0h8",
+  "okta_app_grant_ids": {
+    "openid": "oag479511u2PzwxXu0h7"
+  },
+  "okta_app_client_secret_id": "ocs2sr4z1t9Zx0SV10h8",
+  "okta_user_id": "00u2sr49f3tpmox7b0h8",
+  "test_user_email": "cru-iap-e2e-test@example.invalid",
+  "test_user_login": "cru-iap-e2e-test@example.invalid",
+  "id_token_claims_verified": [
+    "sub",
+    "email",
+    "name",
+    "preferred_username"
+  ],
+  "created": "2026-07-25"
+}
