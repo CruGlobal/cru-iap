@@ -114,10 +114,18 @@ end
 ## Deployment checklist
 
 - [ ] `IAP_AUDIENCE` set from the terraform module output
-- [ ] Cloud Run `--ingress=internal-and-cloud-load-balancing`. Otherwise the raw
-      `*.run.app` URL reaches the app with **no IAP in front**. Identity still can't
-      be forged (the JWT is signed), but every route must fail closed on a missing
-      header — and a "no header → dev stub" fallback would be catastrophic there.
+- [ ] Cloud Run ingress restricted to the load balancer. **At Cru this is terraform's
+      job, not the deploy's** — `cru-terraform-modules gcp/cloudrun/app` derives it
+      from `load_balancer_strategy`, and the default (`"shared"`) already gives you
+      `INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER` + `default_uri_disabled = true`. There
+      is no `--ingress` flag anywhere in the deploy chain to set, so don't go looking
+      for one. Verify the deployed service rather than assuming either way; if
+      `load_balancer_strategy = "run.app"`, ingress is `INGRESS_TRAFFIC_ALL` and the
+      raw `*.run.app` URL reaches the app with **no IAP in front**.
+- [ ] Regardless of ingress, every route must fail closed on a missing header, and a
+      "no header → dev stub" fallback must be impossible in production. Gate the dev
+      bypass on deploy config (e.g. `IAP_AUDIENCE` being unset), not on the header
+      being absent.
 - [ ] `CruIap::StripForwardedHost` inserted at position 0
 - [ ] Sign-in CTA links **`/?login=true`**, not `/`. Bare `/` loops.
 - [ ] Sign-out redirects to **`/?gcp-iap-mode=CLEAR_LOGIN_COOKIE`** so IAP clears the
