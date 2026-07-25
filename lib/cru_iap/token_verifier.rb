@@ -60,8 +60,9 @@ module CruIap
       "missing_token",            # header absent/blank
       "missing_audience_config",  # IAP_AUDIENCE unset — deploy misconfig
       "bad_iss:",                 # + the offending iss
-      "missing_email",            # no email AND no sub — IAP/pool config gap
-      "malformed_subject",        # present but not email-shaped after unwrap
+      "missing_exp",              # signed but with no expiry — never goes stale
+      "missing_email",            # no email claim — IAP/pool config gap
+      "malformed_subject",        # present but not an address
       "signature_error:",         # + the underlying message
       "audience_mismatch",
       "expired_token",
@@ -109,6 +110,15 @@ module CruIap
 
       iss = payload["iss"].to_s
       return Result.new(ok: false, reason: "bad_iss:#{iss}") unless iss == IAP_ISSUER
+
+      # Require an expiry rather than trusting that one is present. The jwt
+      # gem's verify_expiration is a no-op when the claim is ABSENT, and
+      # googleauth adds no freshness floor of its own — so without this, a
+      # validly signed assertion carrying no `exp` would be accepted forever.
+      # IAP always sets one, so this costs nothing operationally; it just
+      # means we never depend on that being true. (Minting such a token needs
+      # Google's IAP signing key, so this is depth, not a live hole.)
+      return Result.new(ok: false, reason: "missing_exp") if payload["exp"].nil?
 
       email = normalize_email(payload["email"])
       # Two distinct failure reasons on purpose. `missing_email` = the pool

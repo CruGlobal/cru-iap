@@ -183,10 +183,17 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
 7. **Fail closed when `IAP_AUDIENCE` is unset** rather than skipping the audience
    check.
 
-8. **Load-balancer 302s masquerade as Rails redirects** when you are reading logs
+8. **Require `exp`; don't just validate it.** The `jwt` gem's `verify_expiration` is a
+   no-op when the claim is *absent*, and googleauth adds no freshness floor — so a
+   validly signed assertion carrying no `exp` is accepted forever by the rest of the
+   stack. Not attacker-reachable (minting one needs Google's IAP signing key), but the
+   verifier shouldn't depend on IAP always setting it. Same class of trap as gotcha 5:
+   a validator that silently passes on missing input.
+
+9. **Load-balancer 302s masquerade as Rails redirects** when you are reading logs
    during a cutover. Check which layer actually issued them.
 
-9. **Get logs flowing before you theorize.** Two of the wrong turns above were guesses
+10. **Get logs flowing before you theorize.** Two of the wrong turns above were guesses
    written while Rails stdout was not reaching Datadog at all — the commit claiming a
    shape was "observed live" predated log visibility by 25 minutes. Fixing the
    telemetry is cheaper than a deploy cycle.
@@ -196,10 +203,10 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
 `CruIap::TokenVerifier::REASONS` is the shared vocabulary, so every app behind IAP
 files the same Datadog queries. Entries ending in `:` carry a variable suffix.
 
-`missing_token` · `missing_audience_config` · `bad_iss:` · `missing_email` ·
-`malformed_subject` · `signature_error:` · `audience_mismatch` · `expired_token` ·
-`issuer_mismatch` · `verification_error:` · `unexpected_error` · `iap_jwt` (the only
-`ok?` reason)
+`missing_token` · `missing_audience_config` · `bad_iss:` · `missing_exp` ·
+`missing_email` · `malformed_subject` · `signature_error:` · `audience_mismatch` ·
+`expired_token` · `issuer_mismatch` · `verification_error:` · `unexpected_error` ·
+`iap_jwt` (the only `ok?` reason)
 
 A spec asserts every reason the verifier can produce is listed, so the vocabulary
 can't drift silently.

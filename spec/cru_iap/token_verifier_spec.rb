@@ -5,6 +5,10 @@ RSpec.describe CruIap::TokenVerifier do
     {
       "iss"   => "https://cloud.google.com/iap",
       "aud"   => "/projects/178891842216/global/backendServices/12345",
+      # verify_iap is stubbed throughout this file, so exp is never actually
+      # enforced by googleauth here — but TokenVerifier requires the claim to
+      # be PRESENT, so a realistic fixture has to carry one.
+      "exp"   => 1_800_000_000,
       "email" => "alice@cru.org",
       "name"  => "Alice A"
     }
@@ -248,6 +252,15 @@ RSpec.describe CruIap::TokenVerifier do
       expect(result.reason).to eq("malformed_subject")
     end
 
+    it "rejects a token carrying no exp claim, which would otherwise never go stale" do
+      # jwt's verify_expiration is a no-op when the claim is ABSENT and
+      # googleauth adds no freshness floor, so this check is the only thing
+      # standing between us and an assertion that is valid forever.
+      result = verify(returns: payload.reject { |k, _| k == "exp" })
+      expect(result).not_to be_ok
+      expect(result.reason).to eq("missing_exp")
+    end
+
     it "rejects when iss is not the IAP issuer (defensive re-check)" do
       result = verify(returns: payload.merge("iss" => "https://accounts.google.com"))
       expect(result.ok?).to be false
@@ -325,6 +338,7 @@ RSpec.describe CruIap::TokenVerifier do
         described_class.call("t", audience: nil),
         verify(returns: payload),
         verify(returns: payload.merge("iss" => "https://evil.example")),
+        verify(returns: payload.reject { |k, _| k == "exp" }),
         verify(returns: payload.reject { |k, _| k == "email" }),
         verify(returns: payload.merge("email" => "nope")),
         verify(raises: Google::Auth::IDTokens::SignatureError.new("x")),
