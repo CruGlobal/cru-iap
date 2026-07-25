@@ -7,8 +7,11 @@ Extracted from [beacon](https://github.com/CruGlobal/beacon) after its 2026-07 I
 cutover, ahead of the same cutover in cru-bot.
 
 ```ruby
-gem "cru-iap", github: "CruGlobal/cru-iap"
+gem "cru_iap", github: "CruGlobal/cru-iap"
 ```
+
+(Underscored gem name, hyphenated repo — so `Bundler.require` resolves straight to
+`lib/cru_iap.rb` without a shim file.)
 
 ## What it does
 
@@ -16,8 +19,8 @@ Two things, both of which are identical in every app behind IAP:
 
 | | |
 |---|---|
-| `Cru::Iap::TokenVerifier` | Verify the `x-goog-iap-jwt-assertion` JWT; return an email identity or a typed rejection reason |
-| `Cru::Iap::StripForwardedHost` | Drop a client-forged `X-Forwarded-Host` before anything reads `request.host` |
+| `CruIap::TokenVerifier` | Verify the IAP assertion JWT on a request; return an email identity or a typed rejection reason |
+| `CruIap::StripForwardedHost` | Drop a client-forged `X-Forwarded-Host` before anything reads `request.host` |
 
 No Rails or ActiveSupport dependency — `googleauth` only.
 
@@ -48,7 +51,7 @@ below and adapt it.
 
 ```ruby
 # config/initializers/iap.rb
-Cru::Iap.logger = Rails.logger
+CruIap.logger = Rails.logger
 ```
 
 `IAP_AUDIENCE` is read from the environment by default. It is the **backend-service
@@ -60,13 +63,13 @@ supplies it under that exact name.
 
 ```ruby
 # config/application.rb
-config.middleware.insert_before 0, Cru::Iap::StripForwardedHost
+config.middleware.insert_before 0, CruIap::StripForwardedHost
 ```
 
 ### 3. Verify
 
 ```ruby
-result = Cru::Iap::TokenVerifier.call(request.headers["x-goog-iap-jwt-assertion"])
+result = CruIap::TokenVerifier.from_request(request)
 
 if result.ok?
   user = User.from_iap(email: result.email, name: result.name)
@@ -76,8 +79,13 @@ else
 end
 ```
 
-`.call` accepts `audience:` and `logger:` overrides if you'd rather not use the
-env var / global logger.
+`from_request` takes an `ActionDispatch::Request`, a `Rack::Request`, or a bare Rack
+env hash, and pulls the assertion off it — application code never names the header.
+If you need the wire name for infra config or a test fixture, it's
+`CruIap::TokenVerifier::HEADER`.
+
+Both `from_request` and the lower-level `.call(token)` accept `audience:` and
+`logger:` overrides if you'd rather not use the env var / global logger.
 
 ### Reference wiring (Rails controller)
 
@@ -94,9 +102,8 @@ def resolve_identity
   # Only trust the header on a host IAP actually fronts. On any other host —
   # a second backend, or a direct *.run.app hit — there is no IAP in front to
   # strip a client-supplied header, so ignore it rather than verify it.
-  if iap_fronted_host?
-    jwt = request.headers["x-goog-iap-jwt-assertion"]
-    return Identity.new(user: user_from_iap(jwt), dev_stub: false) if jwt.present?
+  if iap_fronted_host? && CruIap::TokenVerifier.assertion_from(request)
+    return Identity.new(user: user_from_iap(request), dev_stub: false)
   end
   return Identity.new(user: DevAuthStub.user, dev_stub: true) if Rails.env.local?
 
@@ -111,7 +118,7 @@ end
       `*.run.app` URL reaches the app with **no IAP in front**. Identity still can't
       be forged (the JWT is signed), but every route must fail closed on a missing
       header — and a "no header → dev stub" fallback would be catastrophic there.
-- [ ] `Cru::Iap::StripForwardedHost` inserted at position 0
+- [ ] `CruIap::StripForwardedHost` inserted at position 0
 - [ ] Sign-in CTA links **`/?login=true`**, not `/`. Bare `/` loops.
 - [ ] Sign-out redirects to **`/?gcp-iap-mode=CLEAR_LOGIN_COOKIE`** so IAP clears the
       federated login cookie
@@ -122,12 +129,25 @@ end
 
 Notes from beacon's cutover, kept here because they cost real deploy cycles:
 
-1. **A workforce IAP JWT has no `email` claim at all.** The identity is `sub`, a
-   `principal://iam.googleapis.com/locations/global/workforcePools/<pool>/subject/<subject>`
-   URI. The verifier prefers `email`, falls back to `sub`.
-2. **The root cause of that is usually a missing `google.email` attribute mapping**
-   on the workforce pool provider. Fixing the pool is better than relying on the
-   `sub` fallback — but keep the fallback.
+1. **The identity claim differs by IAP mode, so the verifier reads both.**
+
+   | | `email` claim | `sub` claim |
+   |---|---|---|
+   | Plain IAP (Google/Cloud Identity) | the identity | `accounts.google.com:<numeric id>` — useless |
+   | WIF (what beacon-stage receives) | **absent entirely** | `principal://iam.googleapis.com/locations/global/workforcePools/<pool>/subject/<email>` |
+
+   Hence `email` first, `sub` as fallback: that single ordering is correct in both
+   modes. In plain-IAP mode a fallback to `sub` would yield a numeric string, which
+   fails the email-shape gate and rejects — the right outcome.
+
+2. **A workforce JWT missing its identity entirely usually means a missing
+   `google.email` attribute mapping** on the pool provider. Fix the pool rather than
+   leaning on the fallback.
+
+   ⚠️ **Unverified:** whether a workforce pool *with* `google.email` correctly mapped
+   then emits an `email` claim in the IAP JWT. Beacon has never run that
+   configuration — every observation above comes from a pool without the mapping. If
+   you get a correctly-mapped pool working, please confirm or correct this line.
 3. **Unwrap the workforce URI before the generic `prefix:` split.** The URI contains
    colons; splitting first mangles it to `//iam.googleapis.com/…`.
 4. **The subject is percent-encoded** — `alice%40cru.org`.
@@ -143,7 +163,7 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
 
 ## Rejection reasons
 
-`Cru::Iap::TokenVerifier::REASONS` is the shared vocabulary, so every app behind IAP
+`CruIap::TokenVerifier::REASONS` is the shared vocabulary, so every app behind IAP
 files the same Datadog queries. Entries ending in `:` carry a variable suffix.
 
 `missing_token` · `missing_audience_config` · `bad_iss:` · `missing_email` ·
@@ -160,7 +180,7 @@ The verifier is silent except for two `warn`s: `malformed_subject` (which dumps 
 full JWT payload, so an unexpected principal shape is diagnosable without
 re-deploying instrumentation) and the fail-closed catch-all. The payload is identity
 claims, not credentials — the same sensitivity as the emails already in your request
-logs. It defaults to a null logger until you set `Cru::Iap.logger`.
+logs. It defaults to a null logger until you set `CruIap.logger`.
 
 ## Development
 

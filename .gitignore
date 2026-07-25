@@ -2,3 +2,12 @@
 /pkg/
 /tmp/
 Gemfile.lock
+.idea/
+.DS_Store
+
+# E2E: never commit terraform state, plans, or provider binaries
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.auto.tfvars
