@@ -11,3 +11,10 @@ Gemfile.lock
 *.tfstate.*
 *.tfplan
 *.auto.tfvars
+
+# E2E: scratch Okta credentials (client secret, test user password)
+/e2e/okta/secrets.json
+/e2e/**/secrets.json
+*.secrets.json
+/e2e/okta/*.token
+
