@@ -1,4 +1,4 @@
-RSpec.describe Cru::Iap::TokenVerifier do
+RSpec.describe CruIap::TokenVerifier do
   let(:audience) { "/projects/178891842216/global/backendServices/12345" }
 
   let(:payload) do
@@ -43,6 +43,46 @@ RSpec.describe Cru::Iap::TokenVerifier do
     it "rejects when the audience is blank" do
       result = described_class.call("some.jwt.token", audience: "  ")
       expect(result.reason).to eq("missing_audience_config")
+    end
+  end
+
+  describe ".from_request" do
+    # Application code should never name the header; these cover the three
+    # request-ish things a caller might hand us.
+    let(:env) { { described_class::RACK_ENV_KEY => "fake.jwt.token" } }
+
+    it "pulls the assertion out of a bare Rack env hash" do
+      allow(Google::Auth::IDTokens).to receive(:verify_iap)
+        .with("fake.jwt.token", aud: audience).and_return(payload)
+      expect(described_class.from_request(env, audience: audience)).to be_ok
+    end
+
+    it "pulls the assertion off anything responding to get_header (Rack/ActionDispatch)" do
+      request = double("Rack::Request")
+      allow(request).to receive(:get_header).with(described_class::RACK_ENV_KEY)
+        .and_return("fake.jwt.token")
+      allow(Google::Auth::IDTokens).to receive(:verify_iap)
+        .with("fake.jwt.token", aud: audience).and_return(payload)
+      expect(described_class.from_request(request, audience: audience)).to be_ok
+    end
+
+    it "rejects missing_token when the header is absent" do
+      result = described_class.from_request({}, audience: audience)
+      expect(result).not_to be_ok
+      expect(result.reason).to eq("missing_token")
+    end
+
+    it "forwards audience: and logger: through to the verifier" do
+      logger = instance_double(Logger, warn: nil)
+      allow(Google::Auth::IDTokens).to receive(:verify_iap)
+        .and_return(payload.merge("email" => "not-an-email"))
+      described_class.from_request(env, audience: audience, logger: logger)
+      expect(logger).to have_received(:warn).with(a_string_including("malformed subject"))
+    end
+
+    it "exposes the wire header name for infra config and fixtures" do
+      expect(described_class::HEADER).to eq("x-goog-iap-jwt-assertion")
+      expect(described_class::RACK_ENV_KEY).to eq("HTTP_X_GOOG_IAP_JWT_ASSERTION")
     end
   end
 
@@ -120,6 +160,22 @@ RSpec.describe Cru::Iap::TokenVerifier do
     it "prefers the email claim over sub when both are present" do
       result = verify(returns: payload.merge("sub" => "accounts.google.com:other@cru.org"))
       expect(result.email).to eq("alice@cru.org")
+    end
+
+    it "uses email for a plain (non-WIF) IAP payload, whose sub is a numeric Google id" do
+      # The realistic plain-IAP shape. If the preference order ever flipped,
+      # this would resolve to the numeric id and reject — so it guards the
+      # ordering, not just the happy path.
+      result = verify(returns: payload.merge("sub" => "accounts.google.com:104291823410293841029"))
+      expect(result).to be_ok
+      expect(result.email).to eq("alice@cru.org")
+    end
+
+    it "rejects rather than accepting a numeric Google id if email is absent" do
+      result = verify(returns: payload.reject { |k, _| k == "email" }
+        .merge("sub" => "accounts.google.com:104291823410293841029"))
+      expect(result).not_to be_ok
+      expect(result.reason).to eq("malformed_subject")
     end
 
     it "leaves a bare email untouched (no colon → no prefix)" do
@@ -240,8 +296,8 @@ RSpec.describe Cru::Iap::TokenVerifier do
       expect(logger).not_to have_received(:warn)
     end
 
-    it "defaults to Cru::Iap.logger" do
-      expect(Cru::Iap.logger).to receive(:warn).with(a_string_including("malformed subject"))
+    it "defaults to CruIap.logger" do
+      expect(CruIap.logger).to receive(:warn).with(a_string_including("malformed subject"))
       verify(returns: payload.merge("email" => "not-an-email"))
     end
   end

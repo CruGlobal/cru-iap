@@ -8,15 +8,19 @@ Initial extraction from beacon, following its IAP + Workforce Identity Federatio
 cutover and ahead of the same cutover in cru-bot.
 
 ### Added
-- `Cru::Iap::TokenVerifier` — verifies the `x-goog-iap-jwt-assertion` JWT and
-  extracts an email identity. Handles both IAP identity shapes: a plain `email`
-  claim, and the WIF workforce principal URI in `sub` (which is all a workforce JWT
-  carries — it has no `email` claim). Typed rejection reasons for telemetry.
-- `Cru::Iap::StripForwardedHost` — Rack middleware that drops a client-forged
+- `CruIap::TokenVerifier` — verifies the IAP assertion JWT and extracts an email
+  identity. Handles both IAP identity shapes: a plain `email` claim (plain IAP, where
+  `sub` is a useless numeric id), and the WIF workforce principal URI in `sub` (all a
+  workforce JWT carries — it has no `email` claim). Typed rejection reasons for
+  telemetry.
+- `TokenVerifier.from_request` — takes an `ActionDispatch::Request`, `Rack::Request`,
+  or bare Rack env, so application code never names the header. `HEADER` /
+  `RACK_ENV_KEY` are exposed for infra config and fixtures.
+- `CruIap::StripForwardedHost` — Rack middleware that drops a client-forged
   `X-Forwarded-Host` before anything resolves `request.host`.
-- `Cru::Iap::TokenVerifier::REASONS` — the shared rejection vocabulary, asserted
+- `CruIap::TokenVerifier::REASONS` — the shared rejection vocabulary, asserted
   complete by a spec so it can't drift.
-- `Cru::Iap.logger` — null by default.
+- `CruIap.logger` — null by default.
 
 ### Changed from the beacon originals
 - No Rails/ActiveSupport dependency; `googleauth` only, so it works in a plain Rack

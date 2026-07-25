@@ -1,4 +1,4 @@
-RSpec.describe Cru::Iap::StripForwardedHost do
+RSpec.describe CruIap::StripForwardedHost do
   let(:downstream) { ->(env) { [200, {}, [env.key?("HTTP_X_FORWARDED_HOST").to_s]] } }
   let(:middleware) { described_class.new(downstream) }
 
