@@ -319,3 +319,33 @@ choose), which doesn't exist until after the first create.
 1. Apply with `wif_oauth_client_generated_id = ""` (a placeholder URI is used).
 2. Copy the `wif_oauth_client_generated_id` output into that variable.
 3. Apply again.
+
+## Capturing a real workforce IAP assertion
+
+The `wif` workspace runs `gcr.io/google-containers/echoserver:1.10`, which echoes
+every request header into the response body. Behind IAP only a signed-in user can
+reach it, so this is safe here and is how the keep-zero POC's reference payload was
+captured.
+
+1. Open https://cru-iap-wif.matt-sandbox.ustech.app/?login=true in a browser.
+   IAP redirects to `auth.cloud.google/authorize` with
+   `provider_name=…/workforcePools/keepzero-okta-poc/providers/okta-preview-saml`,
+   which hands off to Okta (cru.oktapreview.com). Sign in as a principal that holds
+   `roles/iap.httpsResourceAccessor` — `iap_members` in `wif.tfvars`.
+2. In the echoed output find `x-goog-iap-jwt-assertion`. That is the real thing.
+3. Feed it to the verifier:
+
+   ```ruby
+   IAP_AUDIENCE=/projects/898330966415/global/backendServices/2605597618877293205 \
+     ruby -Ilib -rcru_iap -e 'p CruIap::TokenVerifier.call(ARGV[0])' -- "<paste jwt>"
+   ```
+
+   Expect `ok?` true, `reason` `"iap_jwt"`, and `email` your Okta address — because
+   `keepzero-okta-poc` maps `google.email`. Against a pool WITHOUT that mapping the
+   same command returns `missing_email`, which is the whole point of the exercise.
+
+Note the audience shape: LB-fronted IAP uses
+`/projects/NUMBER/global/backendServices/ID`, while IAP directly on Cloud Run uses
+`/projects/NUMBER/locations/REGION/services/NAME`. Don't copy one into the other.
+
+Swap back to the hello sample by removing `container_image` from `wif.tfvars`.

@@ -75,7 +75,7 @@ variable "container_image" {
 
     If you want the e2e test to capture a REAL IAP assertion JWT, point this at
     an echo image that dumps request headers, e.g.
-    "registry.k8s.io/echoserver:1.10" (port 8080) — then
+    "gcr.io/google-containers/echoserver:1.10" (port 8080) — then
     `x-goog-iap-jwt-assertion` shows up in the response body and can be fed
     straight into CruIap::TokenVerifier.
   EOT
