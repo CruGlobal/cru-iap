@@ -1,0 +1,12 @@
+{
+  "name": "cru-iap-e2e-okta",
+  "private": true,
+  "type": "module",
+  "description": "Headless Okta -> WIF -> IAP sign-in, to capture a real assertion JWT.",
+  "scripts": {
+    "capture": "node capture_assertion.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.0"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "_provenance": {
+    "what": "Verbatim claims from a REAL Google IAP assertion JWT, decoded from a live capture.",
+    "captured": "2026-07-25",
+    "how": "e2e/okta/capture_assertion.mjs -- headless Okta sign-in (SAML) -> Workforce Identity Federation -> IAP -> gcr.io/google-containers/echoserver, which echoes the injected header.",
+    "where": "https://cru-iap-wif.matt-sandbox.ustech.app/ (project cru-iap-e2e-lb, org test.cru.org), federated to workforce pool keepzero-okta-poc.",
+    "why": "The offline integration suite mints synthetic payloads. This is the ground truth those are modelled on -- if Google ever changes the shape, the spec that compares the two will say so instead of the suite quietly testing a fiction.",
+    "signature": "Deliberately NOT stored. The signature is only valid for this exact payload and it expired 600s after capture, so it would be dead weight. Specs re-sign these claims with a locally minted key.",
+    "identity": "A throwaway Okta user at example.invalid -- not a real person, no mailbox."
+  },
+  "claims": {
+    "aud": "/projects/898330966415/global/backendServices/2605597618877293205",
+    "azp": "/projects/898330966415/global/backendServices/2605597618877293205",
+    "email": "cru-iap-e2e-test@example.invalid",
+    "exp": 1785030166,
+    "iat": 1785029566,
+    "identity_source": "WORKFORCE_IDENTITY",
+    "iss": "https://cloud.google.com/iap",
+    "sub": "sts.google.com:AAFTZtu4HH_YB5N-0PKpuRFXZj-ziDJSvJCIhth-IjORtiSFUzzGWOVy_EpDTNGUNDmhtek35dJ3eBC3cGGV8UuVReBWW65FfDPN3U__fD8a4WtdFyeOAusZ99k0pJr-Iii0JnZZ6Jaethw1ZgVQPQ",
+    "workforce_identity": {
+      "iam_principal": "principal://iam.googleapis.com/locations/global/workforcePools/keepzero-okta-poc/subject/cru-iap-e2e-test@example.invalid",
+      "workforce_pool_name": "locations/global/workforcePools/keepzero-okta-poc"
+    }
+  },
+  "sibling_headers": {
+    "x-goog-authenticated-user-email": "sts.google.com:cru-iap-e2e-test@example.invalid",
+    "x-goog-authenticated-user-id": "sts.google.com:AAFTZtu4HH_YB5N-0PKpuRFXZj-ziDJSvJCIhth-IjORtiSFUzzGWOVy_EpDTNGUNDmhtek35dJ3eBC3cGGV8UuVReBWW65FfDPN3U__fD8a4WtdFyeOAusZ99k0pJr-Iii0JnZZ6Jaethw1ZgVQPQ"
+  },
+  "notes": [
+    "email is a BARE address -- no namespace prefix. The prefix appears on the sibling header, not the claim.",
+    "sub is opaque and useless as an identity. A sub fallback could never have worked here.",
+    "principal:// lives in the nested workforce_identity claim, NOT in sub. The verifier ignores it.",
+    "There is NO name claim. Callers seeding a display name must fall back to the email local part."
+  ]
+}

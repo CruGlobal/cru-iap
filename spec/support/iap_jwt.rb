@@ -115,6 +115,10 @@ module IapJwt
     {
       "iss" => IapJwt::IAP_ISSUER,
       "aud" => IapJwt::AUDIENCE,
+      # Real IAP JWTs carry azp equal to aud. Present here so the synthetic
+      # payload matches a live capture claim-for-claim -- see the drift check
+      # in spec/integration/claim_shapes_spec.rb.
+      "azp" => IapJwt::AUDIENCE,
       "iat" => now - 30,
       "exp" => now + 600,
       # Opaque and namespaced. Never an identity in any IAP mode.
