@@ -33,6 +33,19 @@ Two behaviours differ from the Ruby by necessity, both covered by tests:
 - A **repeated assertion header** is treated as absent rather than resolved to one of
   the values, so the request fails closed instead of the library guessing.
 
+### Added — `[docs]` the IAP access-denied page, proven live
+
+IAP *can* redirect an authenticated-but-unauthorized user (signed in through Okta, not
+in the group that grants access) to a page you control:
+`applicationSettings.accessDeniedPageSettings.accessDeniedPageUri`. Verified end to end
+on 2026-07-25 with a real Okta → WIF → IAP sign-in; `e2e/okta/probe_denied.mjs` is the
+reproduction. Five constraints the docs omit — no query parameters are appended (not
+even with `generate_troubleshooting_uri`), the `Accept` header is ignored so XHRs get a
+cross-origin 302 rather than a 401, the 302 still carries IAP's default HTML body, it
+covers the authz path only, and Google documents it as a paid-subscription feature
+though it applied without one here. Plus: IAP IAM changes take **well over five
+minutes** to propagate, which cost one false "the denial path doesn't work" reading.
+
 ### Removed — `[ruby]` two behaviors inherited from beacon that were based on a wrong theory
 
 Investigation on 2026-07-25 recovered a captured live IAP payload (keep-zero POC
