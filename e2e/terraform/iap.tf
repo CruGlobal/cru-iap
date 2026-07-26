@@ -70,6 +70,26 @@ resource "google_iap_settings" "wif" {
   count = local.wif ? 1 : 0
   name  = "projects/${var.project_number}/iap_web/compute/services/${google_compute_backend_service.iap.name}"
 
+  # Custom access-denied page. This is the AUTHORIZATION failure path — the
+  # user authenticated fine (Okta accepted them, the pool minted a token) but
+  # holds no roles/iap.httpsResourceAccessor binding. Without it IAP serves its
+  # own bare "You don't have access" page; with it, IAP 302s to this URI.
+  #
+  # Distinct from the sign-in loop: an UNauthenticated request goes to
+  # auth.cloud.google/authorize regardless of this setting.
+  dynamic "application_settings" {
+    for_each = var.access_denied_page_uri == "" ? [] : [1]
+    content {
+      access_denied_page_settings {
+        access_denied_page_uri = var.access_denied_page_uri
+        # Appends a Google-generated troubleshooting link to the redirect, so
+        # the custom page can offer "why was I denied?" without the app
+        # needing any IAM read access itself.
+        generate_troubleshooting_uri = var.access_denied_generate_troubleshooting_uri
+      }
+    }
+  }
+
   access_settings {
     identity_sources = ["WORKFORCE_IDENTITY_FEDERATION"]
     workforce_identity_settings {

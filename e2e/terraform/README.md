@@ -45,17 +45,35 @@ This stack owns a **standalone** load balancer rather than joining a shared one.
 
 ## Current state
 
-Applied, running. Workforce federation is **off** (see Blockers).
+**One workspace is live: `wif`.** The `default` workspace — the original
+Google-identity stack in Matt's sandbox — was **destroyed 2026-07-25** (20 resources,
+verified: A record gone, `*.run.app` 404, state empty). It was strictly superseded by
+`wif`, which is the same architecture plus real Okta federation, and each LB costs
+~$18/month whether or not anyone uses it.
 
-| | |
-|---|---|
-| URL | <https://cru-iap-e2e.matt-sandbox.ustech.app/> |
-| `IAP_AUDIENCE` | `/projects/178891842216/global/backendServices/3357314301240629663` |
-| LB IP | `136.69.48.172` |
-| Cloud Run | `cru-iap-e2e` in `us-central1`, `ingress = INTERNAL_LOAD_BALANCER`, min instances 0 |
-| IAP mode | Google identities (`user:matt.drees@cru.org` granted) |
+Everything below under "Google identities" describes that destroyed stack and is kept
+because the verification table is still the reference for what a correct apply looks
+like. `terraform workspace select default && terraform apply` recreates it.
 
-`terraform output` is the source of truth; the values above are a convenience copy.
+| | `default` (destroyed) | `wif` (live) |
+|---|---|---|
+| Project | `cru-mattdrees-sandbox-poc` (cru.org) | `cru-iap-e2e-lb` (test.cru.org) |
+| URL | <https://cru-iap-e2e.matt-sandbox.ustech.app/> | <https://cru-iap-wif.matt-sandbox.ustech.app/> |
+| IAP mode | Google identities | Workforce federation → Okta SAML |
+| Pool | — | `keepzero-okta-poc` (borrowed) |
+| `IAP_AUDIENCE` | `/projects/178891842216/global/backendServices/3357314301240629663` | `/projects/898330966415/global/backendServices/2605597618877293205` |
+
+`terraform output` is the source of truth; the values here are a convenience copy.
+Applying `wif` needs `-var-file=wif.tfvars` and an access token for a `test.cru.org`
+principal, since ADC is a `cru.org` identity:
+
+```sh
+terraform workspace select wif
+terraform apply -var-file=wif.tfvars \
+  -var access_token="$(gcloud auth print-access-token --account=phillip.drees@test.cru.org)"
+```
+
+### The destroyed Google-identity stack
 
 Verified live after apply (2026-07-25), managed cert `ACTIVE`:
 
@@ -113,6 +131,61 @@ sandbox has **no** compute permissions and cannot apply this stack — it lacks
 * **`google.email` attribute mapping** — see `locals.tf`. Present and commented
   as load-bearing, because its absence is the exact bug this e2e exists to
   catch.
+
+## Access-denied page — measured live, it works
+
+**Question:** can IAP redirect somewhere friendly when a user is authenticated but not
+authorized — signed in through Okta fine, but not in the group that grants access?
+
+**Answer: yes.** `IapSettings.applicationSettings.accessDeniedPageSettings
+.accessDeniedPageUri`, exposed by the terraform provider as
+`application_settings { access_denied_page_settings { … } }` and wired up here behind
+`var.access_denied_page_uri` (default `""` = IAP's built-in page). Proven end to end on
+2026-07-25 in this stack: the scratch user's
+`roles/iap.httpsResourceAccessor` binding was removed, `access_denied_page_uri` was set
+to `https://example.com/cru-iap-denied`, and a real headless Okta sign-in landed on
+example.com rather than IAP's error page. `e2e/okta/probe_denied.mjs` is that probe,
+kept so the result is reproducible rather than a claim in a README.
+
+Six things the test established that the docs do not say:
+
+1. **This is the authorization path only.** An *unauthenticated* request still goes to
+   `auth.cloud.google/authorize`. The custom page is reached only after a successful
+   sign-in that then fails the IAM check — which is exactly the "wrong Okta group"
+   case, since group membership is expressed as a
+   `principalSet://…/workforcePools/<pool>/group/<okta-group>` binding.
+2. **No query parameters are appended. None.** The `Location` is the bare URI, even
+   with `generate_troubleshooting_uri = true` set. The custom page learns *nothing*
+   about who was denied or why — so it has to be a static "you don't have access, here
+   is who to ask" page, or work the identity out for itself. Plan for that; it is the
+   main constraint on how useful this is.
+3. **The `Accept` header is ignored.** An `Accept: application/json` request gets the
+   same `302` to a cross-origin URL, not a `401`. For a SPA or an API route behind IAP
+   that means `fetch` follows the redirect and dies on CORS rather than seeing a status
+   it can act on. Worth knowing before pointing this at a page on another origin.
+4. **The `302` still carries IAP's default "Access Denied" HTML as its body.** Clients
+   that follow redirects reach the custom page; clients that don't see the old one.
+5. **IAM propagation is slow — well over 5 minutes.** The first probe, run immediately
+   after removing the binding, sailed straight through to the app. Do not conclude
+   "denial isn't working" from an immediate retest; wait, then retest.
+6. **Google documents this as part of a paid enterprise security subscription**
+   (Chrome Enterprise Premium). It nevertheless applied and was honoured in
+   `test.cru.org` with nothing purchased for it. Either the org is entitled or the gate
+   is not enforced on this field — **confirm entitlement before depending on it in
+   production**, since "works in test" is not evidence about billing.
+
+The stack has been restored to its documented state: no `accessDeniedPageSettings`, and
+both principals back in `iap_members`.
+
+```sh
+# reproduce
+terraform apply -var-file=wif.tfvars -var access_token="$TOK" \
+  -var access_denied_page_uri="https://example.com/cru-iap-denied" \
+  -var 'iap_members=["principal://…/subject/matt.drees@cru.org"]'   # drop the scratch user
+sleep 360                                    # IAM propagation, see (5)
+node ../okta/probe_denied.mjs
+terraform apply -var-file=wif.tfvars -var access_token="$TOK"       # restore
+```
 
 ## Getting a real IAP assertion JWT
 
