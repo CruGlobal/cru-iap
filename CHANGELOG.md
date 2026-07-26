@@ -39,12 +39,14 @@ IAP *can* redirect an authenticated-but-unauthorized user (signed in through Okt
 in the group that grants access) to a page you control:
 `applicationSettings.accessDeniedPageSettings.accessDeniedPageUri`. Verified end to end
 on 2026-07-25 with a real Okta → WIF → IAP sign-in; `e2e/okta/probe_denied.mjs` is the
-reproduction. Five constraints the docs omit — no query parameters are appended (not
-even with `generate_troubleshooting_uri`), the `Accept` header is ignored so XHRs get a
-cross-origin 302 rather than a 401, the 302 still carries IAP's default HTML body, it
-covers the authz path only, and Google documents it as a paid-subscription feature
-though it applied without one here. Plus: IAP IAM changes take **well over five
-minutes** to propagate, which cost one false "the denial path doesn't work" reading.
+reproduction. Five constraints the docs omit — **hardcoded query parameters survive
+verbatim but IAP appends nothing of its own** (no identity, no reason, and no
+troubleshooting link even with `generate_troubleshooting_uri`, so the page can carry
+static context only), the `Accept` header is ignored so XHRs get a cross-origin 302
+rather than a 401, the 302 still carries IAP's default HTML body, it covers the authz
+path only, and Google documents it as a paid-subscription feature though it applied
+without one here. Plus: IAP IAM changes take **well over five minutes** to propagate,
+which cost one false "the denial path doesn't work" reading.
 
 ### Removed — `[ruby]` two behaviors inherited from beacon that were based on a wrong theory
 
