@@ -1,6 +1,6 @@
 # The LB+WIF stack, in test.cru.org so it can share an org with a workforce pool.
-project_id     = "cru-iap-e2e-lb"
-project_number = "898330966415"
+project_id      = "cru-iap-e2e-lb"
+project_number  = "898330966415"
 organization_id = "104798307476"
 
 subdomain = "cru-iap-wif"

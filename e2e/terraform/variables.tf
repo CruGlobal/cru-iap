@@ -209,3 +209,32 @@ variable "wif_oauth_client_generated_id" {
   type        = string
   default     = ""
 }
+
+######################################
+# Access-denied page (authorization failure)
+######################################
+
+variable "access_denied_page_uri" {
+  description = <<-EOT
+    URI IAP redirects to when a request is AUTHENTICATED but not AUTHORIZED —
+    i.e. the user signed in through Okta/WIF fine, but holds no
+    roles/iap.httpsResourceAccessor binding. Empty (default) = IAP's own
+    built-in "You don't have access" page.
+
+    Note this is the authz path only. An unauthenticated request still goes to
+    auth.cloud.google/authorize regardless.
+
+    Google's docs describe the custom access-denied page as part of a paid
+    enterprise security subscription (Chrome Enterprise Premium), so whether
+    the setting is honoured is org-dependent — measured here rather than
+    assumed, see README "Access-denied page".
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "access_denied_generate_troubleshooting_uri" {
+  description = "Have IAP append a generated troubleshooting link to the access-denied redirect."
+  type        = bool
+  default     = false
+}
