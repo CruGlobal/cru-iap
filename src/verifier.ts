@@ -131,12 +131,38 @@ export function verifyRequest(
   return verify(assertionFrom(source), options);
 }
 
-/** Verify a raw assertion JWT. */
+/**
+ * Verify a raw assertion JWT.
+ *
+ * Never throws — every path returns a Result. The outer catch is the
+ * fail-closed backstop: a caller's logger raising, or a jose version throwing
+ * something unanticipated, must not turn an authentication check into an
+ * unhandled rejection that some framework's error boundary renders as a 500
+ * (or worse, that a `.catch(() => next())` swallows into a pass).
+ */
 export async function verify(
   assertion: string | null | undefined,
   options: VerifyOptions = {},
 ): Promise<VerifyResult> {
   const logger = options.logger ?? NULL_LOGGER;
+  try {
+    return await attemptVerify(assertion, options, logger);
+  } catch (error) {
+    const described = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    try {
+      logger.warn(`[cru-iap] unexpected ${described}`);
+    } catch {
+      // A logger that throws is exactly the case this backstop exists for.
+    }
+    return reject("unexpected_error");
+  }
+}
+
+async function attemptVerify(
+  assertion: string | null | undefined,
+  options: VerifyOptions,
+  logger: Logger,
+): Promise<VerifyResult> {
   const audience = (options.audience ?? process.env["IAP_AUDIENCE"] ?? "").trim();
   const token = (assertion ?? "").trim();
 
@@ -162,7 +188,7 @@ export async function verify(
         : { clockTolerance: options.clockToleranceSeconds }),
     }));
   } catch (error) {
-    return reject(reasonForError(error, logger));
+    return reject(reasonForError(error));
   }
 
   // Belt-and-braces: jose already enforced `issuer` above. Re-assert so a
@@ -201,7 +227,14 @@ export async function verify(
     return reject("malformed_subject");
   }
 
-  const name = String(payload["name"] ?? "").trim();
+  // String-only, for the same reason as `email`: coercion would render an
+  // array or object into a plausible-looking display name. A non-string here
+  // is not worth rejecting the whole request over — `name` is decoration, not
+  // identity — so it degrades to null and the caller's local-part fallback
+  // takes over. (The real WIF payload has no `name` claim at all, so that
+  // fallback is the production path anyway.)
+  const rawName = payload["name"];
+  const name = typeof rawName === "string" ? rawName.trim() : "";
   return { ok: true, reason: "iap_jwt", email, name: name === "" ? null : name, payload };
 }
 
@@ -214,7 +247,7 @@ function reject(reason: string): VerifyResult {
  * main reason this package doesn't use google-auth-library, which reports
  * every one of these as a bare Error with a prose message.
  */
-function reasonForError(error: unknown, logger: Logger): string {
+function reasonForError(error: unknown): string {
   if (error instanceof joseErrors.JWTExpired) return "expired_token";
 
   if (error instanceof joseErrors.JWTClaimValidationFailed) {
@@ -270,9 +303,10 @@ function reasonForError(error: unknown, logger: Logger): string {
     return `verification_error:${error.constructor.name}`;
   }
 
-  const described = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  logger.warn(`[cru-iap] unexpected ${described}`);
-  return "unexpected_error";
+  // Anything else is not a jose failure at all — let the outer fail-closed
+  // backstop in `verify` log and classify it, so there is exactly one place
+  // that decides what "unexpected" means.
+  throw error;
 }
 
 /**
