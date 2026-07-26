@@ -1,8 +1,39 @@
 # Changelog
 
+This repo now ships **two** libraries from one source of truth: the `cru_iap` Ruby gem
+and the `@cruglobal/cru-iap` npm package. Entries below are marked `[ruby]`, `[ts]`, or
+`[both]`.
+
 ## [Unreleased]
 
-### Removed — two behaviors inherited from beacon that were based on a wrong theory
+### Added — `[ts]` a TypeScript sibling of the gem
+
+`@cruglobal/cru-iap`, for Cru's Node apps (bills first). Same rejection vocabulary,
+same claim-shape decisions, same pinned real-capture fixture — so the two languages
+cannot quietly disagree about what IAP emits.
+
+- `verify(assertion, {audience, jwks, logger, clockToleranceSeconds})` and
+  `verifyRequest(source, …)`, which accepts a Web `Request`/`Headers` (Next.js App
+  Router, Edge runtime), a Node `IncomingMessage`, or a plain header record.
+- `assertionFrom`, `HEADER`, `REASONS`, `isKnownReason`, `IAP_ISSUER`, `IAP_JWKS_URL`.
+- Async, because WebCrypto verification is. There is no sync path.
+
+Built on **jose**, not `google-auth-library`, for three measured reasons:
+`getIapPublicKeys` has no cache at all (the Ruby `googleauth` memoizes for an hour), so
+per-request use would put a gstatic.com round-trip in front of every authenticated
+request; it reports every failure as a bare `Error` with a prose message, which would
+leave the shared reason vocabulary matched on substrings; and it is Node-only, whereas
+jose runs in Next.js middleware on the Edge runtime — where an IAP gate wants to live.
+
+Two behaviours differ from the Ruby by necessity, both covered by tests:
+- A **non-string `email` claim** is rejected outright rather than coerced.
+  `String(["alice@cru.org"])` is `"alice@cru.org"`, so coercing would turn a
+  multi-address array into an accepted single identity. Ruby's `Array#to_s` renders the
+  brackets and rejects; JS would not.
+- A **repeated assertion header** is treated as absent rather than resolved to one of
+  the values, so the request fails closed instead of the library guessing.
+
+### Removed — `[ruby]` two behaviors inherited from beacon that were based on a wrong theory
 
 Investigation on 2026-07-25 recovered a captured live IAP payload (keep-zero POC
 echoserver) and beacon-stage's Datadog logs on both sides of the cru-terraform
@@ -26,7 +57,7 @@ echoserver) and beacon-stage's Datadog logs on both sides of the cru-terraform
   `malformed_subject`.
 
 ### Fixed
-- **`URI::MailTo::EMAIL_REGEXP` was not a sufficient shape gate.** RFC 5322 permits
+- `[ruby]` **`URI::MailTo::EMAIL_REGEXP` was not a sufficient shape gate.** RFC 5322 permits
   `/` in a local part, so `principal://iam.googleapis.com/.../subject/alice@cru.org`
   matches it in full and would have been persisted as a user whose email is that
   entire string. Found when removing the unwrapping regex above, which had been
