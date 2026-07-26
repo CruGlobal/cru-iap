@@ -14,6 +14,28 @@ variable "project_number" {
   default     = "178891842216"
 }
 
+variable "access_token" {
+  description = <<-EOT
+    OAuth access token for the identity that owns var.project_id. Empty (default)
+    = use ADC. Set this when the stack's project is in a different org from your
+    ADC identity, e.g.
+
+      -var access_token="$(gcloud auth print-access-token --account=phillip.drees@test.cru.org)"
+
+    Tokens last ~1h; refresh before a long apply. The DNS record uses ADC
+    regardless, via the aliased provider.
+  EOT
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "dns_project" {
+  description = "Project that owns dns_managed_zone. Defaults to the sandbox project in cru.org, which holds the ustech.app delegation, even when the rest of the stack lives elsewhere."
+  type        = string
+  default     = "cru-mattdrees-sandbox-poc"
+}
+
 variable "region" {
   description = "Region for the Cloud Run service and its serverless NEG."
   type        = string

@@ -23,6 +23,7 @@ resource "google_project_service" "enabled" {
 }
 
 data "google_dns_managed_zone" "this" {
-  project = var.project_id
-  name    = var.dns_managed_zone
+  provider = google.dns
+  project  = var.dns_project
+  name     = var.dns_managed_zone
 }
