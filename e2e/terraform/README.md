@@ -141,6 +141,48 @@ gcloud asset search-all-resources \
   --query='labels.purpose=cru-iap-e2e'
 ```
 
+## Which workforce mode
+
+`enable_workforce_federation = true` federates IAP to a workforce pool. Where that
+pool comes from depends on `shared_workforce_pool`:
+
+| | `shared_workforce_pool = ""` (create) | `shared_workforce_pool` set (borrow) |
+|---|---|---|
+| Plan size | 25 to add | **3 to add** — OAuth client, credential, `google_iap_settings` |
+| Org-level IAM | **required** (`iam.workforcePools.create`) | none needed to render; see caveat |
+| Okta side | the scratch app in `../okta` | the **shared** SAML app, org-managed |
+| Cleanup | pool id reserved 30 days after destroy | nothing org-level to clean up |
+
+Borrow mode, against Cru's shared pool:
+
+```sh
+terraform apply \
+  -var enable_workforce_federation=true \
+  -var shared_workforce_pool="locations/global/workforcePools/cru-workforce-preview" \
+  -var okta_provider_type=saml
+```
+
+**Caveat, not yet measured:** a successful `plan` only proves Terraform can render a
+pool reference — it does not prove the IAP settings API will *accept* a reference to
+a pool the caller cannot read. `matt.drees@cru.org` has none of
+`iam.workforcePools.{get,create,delete,update}` (measured), so an apply is the test.
+If it 403s, the reference needs pool-level read and borrowing buys nothing over
+creating; if it succeeds, no org IAM is needed for consuming apps at all — which is
+the answer that matters for beacon and cru-bot.
+
+### Borrowing will currently fail to sign anyone in, on purpose
+
+The shared pool's provider is missing `google.email` in its `attribute_mapping`
+(cru-terraform PR #11429 fixes it). Until that merges and applies, a login through
+the shared pool produces an IAP JWT with **no email claim**, and `CruIap::TokenVerifier`
+rejects it with `missing_email` — exactly the failure that cost beacon-stage two
+deploy cycles. That makes borrow mode a faithful end-to-end reproduction of the bug
+today, and the regression test for the fix once #11429 lands.
+
+Note also that switching an already-applied stack into either workforce mode replaces
+Google-identity sign-in on the live URL. The Google-identity path is what currently
+works, so expect to lose it while testing WIF.
+
 ## Teardown
 
 ```sh
