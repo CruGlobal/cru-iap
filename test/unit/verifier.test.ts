@@ -359,6 +359,37 @@ describe("failure containment", () => {
       await expect(run(input)).resolves.toHaveProperty("ok");
     }
   });
+
+  it("survives a logger that throws", async () => {
+    // The fail-closed backstop's own worst case. An authentication check that
+    // rejects with an unhandled error is worse than one that returns a
+    // rejection: a framework error boundary renders a 500, and a careless
+    // `.catch(() => next())` upstream would turn it into a pass.
+    const hostile: Logger = {
+      warn: () => {
+        throw new Error("logger exploded");
+      },
+    };
+
+    const result = await run(await iapToken({ email: "not-an-address" }), { logger: hostile });
+
+    expect(rejected(result)).toBe("unexpected_error");
+  });
+});
+
+describe("the name claim", () => {
+  it("degrades a non-string name to null rather than rejecting the request", async () => {
+    // Unlike `email`, `name` is decoration and not identity, so a bad shape
+    // costs the display name and nothing else — the caller's local-part
+    // fallback takes over. Not coerced, though: String(["a","b"]) would render
+    // a plausible-looking "a,b".
+    for (const claim of [["Alice", "A"], 42, { given: "Alice" }, true]) {
+      const result = await run(await iapToken({ name: claim }));
+
+      expect(result.ok, `name: ${JSON.stringify(claim)}`).toBe(true);
+      expect(result.name).toBeNull();
+    }
+  });
 });
 
 describe("the shared reason vocabulary", () => {
