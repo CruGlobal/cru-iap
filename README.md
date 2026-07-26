@@ -54,10 +54,27 @@ below and adapt it.
 CruIap.logger = Rails.logger
 ```
 
-`IAP_AUDIENCE` is read from the environment by default. It is the **backend-service
-resource path** (`/projects/NUMBER/global/backendServices/ID`), not a URL or a client
-ID — cru-terraform sets it. Don't rename it with an app prefix; the terraform module
-supplies it under that exact name.
+`IAP_AUDIENCE` is read from the environment by default. It is a **resource path**, not
+a URL and not a client ID, and its shape depends on how IAP is fronted:
+
+| IAP mode | `aud` |
+|---|---|
+| Behind an external HTTPS load balancer | `/projects/NUMBER/global/backendServices/BACKEND_ID` |
+| Directly on Cloud Run (no LB) | `/projects/NUMBER/locations/REGION/services/SERVICE_NAME` |
+
+Both are confirmed against live services. The verifier doesn't care which — it's an
+exact string compare — but a deploy that hardcodes the wrong *shape* fails with
+`audience_mismatch`, which reads like a config typo rather than an architecture
+mismatch.
+
+cru-terraform sets this for you. Don't rename it with an app prefix; the terraform
+module supplies it under that exact name.
+
+**IAP directly on Cloud Run is worth knowing about**: it needs no load balancer,
+no certificate, and no DNS, which takes a test or low-traffic environment from
+~$18/month (the LB forwarding-rule bundle, billed regardless of traffic) to
+effectively zero. Set `run.googleapis.com/iap-enabled: 'true'` on the service and
+point `iapSettings` at your workforce pool.
 
 ### 2. Install the middleware
 
