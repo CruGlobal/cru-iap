@@ -246,6 +246,34 @@ at *"who is this?"*.
       federated login cookie
 - [ ] Production logs emitted as JSON with a `severity` field, or Cloud Run drops
       Rails' stdout from the log sink and you'll debug the cutover blind
+- [ ] Decide what an *authorized-but-not-permitted* user sees — see below
+
+## The access-denied page (authenticated, but not authorized)
+
+IAP can redirect a user who signed in successfully but holds no
+`roles/iap.httpsResourceAccessor` binding — the "you're at Cru, but you're not in the
+right Okta group" case — to a page you control, instead of its own bare error page.
+Set `applicationSettings.accessDeniedPageSettings.accessDeniedPageUri`; in terraform,
+`google_iap_settings` exposes it as
+`application_settings { access_denied_page_settings { access_denied_page_uri = … } }`.
+
+**Proven live** on 2026-07-25 against a real Okta → WIF → IAP sign-in; see
+`e2e/terraform/README.md` for the reproduction. Five constraints the docs don't
+mention, all measured rather than assumed:
+
+| | |
+|---|---|
+| Scope | **Authz only.** An unauthenticated request still goes to `auth.cloud.google/authorize`; this page is only reached after a successful sign-in that fails the IAM check. |
+| Parameters | **None are appended** — not even with `generate_troubleshooting_uri = true`. The page learns nothing about who was denied. Make it static, or have it work the identity out itself. |
+| `Accept` | **Ignored.** An XHR asking for JSON gets the same cross-origin `302`, so `fetch` follows it and fails on CORS rather than seeing a status it can handle. |
+| Body | The `302` still carries IAP's default "Access Denied" HTML, for clients that don't follow redirects. |
+| Entitlement | Google documents this as part of a paid enterprise subscription. It worked in `test.cru.org` with nothing bought for it — **confirm before relying on it in production.** |
+
+And one operational note that will waste your afternoon otherwise: **IAP IAM changes
+take well over five minutes to propagate.** A binding you just removed will still let
+the user straight through. Wait before concluding the denial path is broken.
+
+
 
 ## Gotchas this gem encodes
 
