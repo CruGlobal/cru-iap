@@ -264,7 +264,7 @@ mention, all measured rather than assumed:
 | | |
 |---|---|
 | Scope | **Authz only.** An unauthenticated request still goes to `auth.cloud.google/authorize`; this page is only reached after a successful sign-in that fails the IAM check. |
-| Parameters | **None are appended** — not even with `generate_troubleshooting_uri = true`. The page learns nothing about who was denied. Make it static, or have it work the identity out itself. |
+| Parameters | **Yours survive; IAP adds none of its own.** A URI with `?app=bills&reason=no_group` arrives verbatim in the `Location`, so you can encode the app, a support contact, or the group to request. What you cannot get is anything *dynamic* — no identity, no reason, and no troubleshooting link even with `generate_troubleshooting_uri = true`. Static context only. |
 | `Accept` | **Ignored.** An XHR asking for JSON gets the same cross-origin `302`, so `fetch` follows it and fails on CORS rather than seeing a status it can handle. |
 | Body | The `302` still carries IAP's default "Access Denied" HTML, for clients that don't follow redirects. |
 | Entitlement | Google documents this as part of a paid enterprise subscription. It worked in `test.cru.org` with nothing bought for it — **confirm before relying on it in production.** |

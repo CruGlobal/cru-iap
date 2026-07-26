@@ -154,11 +154,18 @@ Six things the test established that the docs do not say:
    sign-in that then fails the IAM check — which is exactly the "wrong Okta group"
    case, since group membership is expressed as a
    `principalSet://…/workforcePools/<pool>/group/<okta-group>` binding.
-2. **No query parameters are appended. None.** The `Location` is the bare URI, even
-   with `generate_troubleshooting_uri = true` set. The custom page learns *nothing*
-   about who was denied or why — so it has to be a static "you don't have access, here
-   is who to ask" page, or work the identity out for itself. Plan for that; it is the
-   main constraint on how useful this is.
+2. **Hardcoded query parameters survive; IAP appends none of its own.** Measured both
+   ways on 2026-07-26. A bare URI comes back bare. A URI set to
+   `https://example.com/cru-iap-denied?app=bills&reason=no_group&v=1` arrives in the
+   `Location` header *verbatim*, query string intact — so static context (which app,
+   who to ask, which group to request) can absolutely be encoded in the URI.
+
+   What you cannot get is anything **dynamic**. IAP adds no identity, no denial
+   reason, and — despite the setting — no troubleshooting link when
+   `generate_troubleshooting_uri = true`. So the custom page can say "you need the
+   Bills group, ask #it-help", but it cannot say "*you*, alice@cru.org, need it". If
+   the page needs the identity it has to establish it itself. Plan around that; it is
+   the real constraint on how useful this is.
 3. **The `Accept` header is ignored.** An `Accept: application/json` request gets the
    same `302` to a cross-origin URL, not a `401`. For a SPA or an API route behind IAP
    that means `fetch` follows the redirect and dies on CORS rather than seeing a status
