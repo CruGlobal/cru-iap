@@ -22,3 +22,10 @@ Gemfile.lock
 # E2E Okta capture: local deps and debug artifacts
 /e2e/okta/node_modules/
 /e2e/okta/capture-failure.png
+
+# TypeScript package: build output and local deps. dist/ is built by the
+# `prepare` script on install, including for `npm i github:CruGlobal/cru-iap`,
+# so it is never committed.
+/node_modules/
+/dist/
+*.tsbuildinfo
