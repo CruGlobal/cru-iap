@@ -230,3 +230,61 @@ RSpec.describe "IAP claim shapes, end to end with signed tokens" do
     end
   end
 end
+
+RSpec.describe "the real captured IAP payload", type: :integration do
+  # Ground truth: claims lifted verbatim from a live workforce IAP assertion
+  # (see the _provenance block in the fixture). Everything else in this suite
+  # is synthetic; this is what the synthetic shapes are modelled on.
+  let(:fixture) do
+    JSON.parse(File.read(File.expand_path("../fixtures/real_wif_iap_payload.json", __dir__)))
+  end
+  let(:real_claims) { fixture.fetch("claims") }
+
+  before { stub_iap_jwks }
+
+  it "verifies when re-signed with a known key, and takes identity from email" do
+    # iat/exp are rewritten because the captured pair expired 600s after
+    # capture. Every other claim is byte-for-byte what Google sent.
+    now = Time.now.to_i
+    claims = real_claims.merge(
+      "iat" => now - 30,
+      "exp" => now + 600,
+      "aud" => IapJwt::AUDIENCE
+    )
+    result = CruIap::TokenVerifier.call(IapJwt.signing_key.sign(claims), audience: IapJwt::AUDIENCE)
+
+    expect(result).to be_ok
+    expect(result.reason).to eq("iap_jwt")
+    expect(result.email).to eq("cru-iap-e2e-test@example.invalid")
+    expect(result.name).to be_nil, "the real WIF payload carries no name claim"
+  end
+
+  it "still verifies with the nested workforce_identity claim removed" do
+    # Proof the verifier genuinely ignores it rather than depending on it.
+    now = Time.now.to_i
+    claims = real_claims.reject { |k, _| k == "workforce_identity" }
+                        .merge("iat" => now - 30, "exp" => now + 600, "aud" => IapJwt::AUDIENCE)
+    expect(CruIap::TokenVerifier.call(IapJwt.signing_key.sign(claims), audience: IapJwt::AUDIENCE)).to be_ok
+  end
+
+  it "rejects the real payload with its email claim stripped, as missing_email" do
+    # The unmapped-google.email pool case, reconstructed from a real payload:
+    # sub is present and well-formed, and is still not an identity.
+    now = Time.now.to_i
+    claims = real_claims.reject { |k, _| k == "email" }
+                        .merge("iat" => now - 30, "exp" => now + 600, "aud" => IapJwt::AUDIENCE)
+    result = CruIap::TokenVerifier.call(IapJwt.signing_key.sign(claims), audience: IapJwt::AUDIENCE)
+
+    expect(result).not_to be_ok
+    expect(result.reason).to eq("missing_email")
+  end
+
+  it "keeps the synthetic wif_claims helper faithful to the real claim set" do
+    # If Google adds or renames a top-level claim, this fails and the rest of
+    # the suite stops silently testing a fiction.
+    synthetic = wif_claims.keys.to_set
+    real = real_claims.keys.to_set
+    expect(real - synthetic).to be_empty,
+      "real payload has claims the synthetic helper lacks: #{(real - synthetic).to_a.inspect}"
+  end
+end
