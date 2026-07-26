@@ -95,15 +95,41 @@ variable "iap_members" {
 ######################################
 
 variable "enable_workforce_federation" {
-  description = "Create the org-level workforce pool + provider + IAM OAuth client and federate IAP to it. Requires org-level IAM."
+  description = "Federate IAP to a workforce pool. Combined with shared_workforce_pool this decides whether the pool is created or borrowed — see that variable."
   type        = bool
   default     = false
+}
+
+variable "shared_workforce_pool" {
+  description = <<-EOT
+    Full resource name of an EXISTING workforce pool to federate IAP to, e.g.
+    "locations/global/workforcePools/cru-workforce-preview" (Cru's shared,
+    org-wide pool, defined in cru-terraform google/workforce-identity).
+
+    Empty (default) = create our own pool + provider, which needs org-level
+    iam.workforcePools.create. Set = borrow the shared one, creating no
+    org-level resource. Borrowing only needs whatever permission the IAP
+    settings API demands to *reference* a pool by name, which is expected to be
+    project-level — that is the point of this mode, and it is measured rather
+    than assumed (see README "Which workforce mode").
+
+    Borrowing means the Okta side is the shared SAML app too, so the app's
+    users must include whoever you intend to sign in as.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "organization_id" {
   description = "Numeric org id that owns the workforce pool. cru.org = 860158542774."
   type        = string
   default     = "860158542774"
+}
+
+variable "shared_workforce_provider_id" {
+  description = "Provider id inside shared_workforce_pool. Cru's shared SAML provider is okta-preview-saml. Only used to render the ACS/audience outputs correctly; the shared Okta app already embeds these."
+  type        = string
+  default     = "okta-preview-saml"
 }
 
 variable "okta_provider_type" {

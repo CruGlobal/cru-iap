@@ -57,11 +57,15 @@ resource "google_iap_web_backend_service_iam_member" "members" {
   member              = each.value
 }
 
-# Federate IAP to the workforce pool. Without this, IAP authenticates with
-# Google identities and the assertion JWT carries a normal `email` claim plus a
-# useless `sub` (`accounts.google.com:<numeric id>`). With it, `sub` becomes
-# `principal://iam.googleapis.com/.../subject/<urlencoded email>` — the shape
-# the gem's workforce path parses. See cru-iap README, gotcha 1.
+# Federate IAP to a workforce pool (created or borrowed — see local.wif_borrow).
+#
+# What changes in the assertion JWT: `sub` goes from
+# `accounts.google.com:<opaque id>` to `sts.google.com:<opaque STS token>`.
+# BOTH are opaque and neither is an identity. The identity is the `email` claim
+# in both modes — which under WIF exists ONLY if the pool provider maps
+# google.email. The principal:// URI does appear, but in a nested
+# `workforce_identity.iam_principal` claim the gem deliberately ignores.
+# See cru-iap README, gotchas 1-3.
 resource "google_iap_settings" "wif" {
   count = local.wif ? 1 : 0
   name  = "projects/${var.project_number}/iap_web/compute/services/${google_compute_backend_service.iap.name}"
@@ -69,7 +73,7 @@ resource "google_iap_settings" "wif" {
   access_settings {
     identity_sources = ["WORKFORCE_IDENTITY_FEDERATION"]
     workforce_identity_settings {
-      workforce_pools = [google_iam_workforce_pool.this[0].name]
+      workforce_pools = [local.wif_pool_name]
       oauth2 {
         client_id     = google_iam_oauth_client.iap[0].client_id
         client_secret = google_iam_oauth_client_credential.iap[0].client_secret

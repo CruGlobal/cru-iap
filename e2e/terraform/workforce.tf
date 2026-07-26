@@ -13,7 +13,7 @@
 ######################################
 
 resource "google_iam_workforce_pool" "this" {
-  count = local.wif ? 1 : 0
+  count = local.wif_create ? 1 : 0
 
   parent            = "organizations/${var.organization_id}"
   location          = "global"
@@ -28,7 +28,7 @@ resource "google_iam_workforce_pool" "this" {
 }
 
 resource "google_iam_workforce_pool_provider" "okta" {
-  count = local.wif ? 1 : 0
+  count = local.wif_create ? 1 : 0
 
   location          = "global"
   workforce_pool_id = google_iam_workforce_pool.this[0].workforce_pool_id

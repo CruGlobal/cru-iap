@@ -44,7 +44,7 @@ output "ssl_certificate_name" {
 
 output "workforce_pool_name" {
   description = "Full workforce pool resource name, for principal:// bindings."
-  value       = local.wif ? google_iam_workforce_pool.this[0].name : null
+  value       = local.wif ? local.wif_pool_name : null
 }
 
 output "workforce_principal_prefix" {
@@ -54,7 +54,7 @@ output "workforce_principal_prefix" {
     <prefix>/subject/<okta sub> — NOT the email. In SAML mode google.subject is
     the NameID, which Cru sets to the email, so it is <prefix>/subject/<url-encoded email>.
   EOT
-  value       = local.wif ? "principal://iam.googleapis.com/${google_iam_workforce_pool.this[0].name}" : null
+  value       = local.wif ? "principal://iam.googleapis.com/${local.wif_pool_name}" : null
 }
 
 output "wif_acs_url" {

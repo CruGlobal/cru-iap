@@ -57,15 +57,26 @@ locals {
 
   wif = var.enable_workforce_federation
 
+  # Two ways to get a pool. Borrowing creates NO org-level resource, so it
+  # works without org IAM; creating needs iam.workforcePools.create.
+  wif_borrow = local.wif && var.shared_workforce_pool != ""
+  wif_create = local.wif && var.shared_workforce_pool == ""
+
+  # What google_iap_settings actually points at, either way.
+  wif_pool_name = local.wif_borrow ? var.shared_workforce_pool : try(google_iam_workforce_pool.this[0].name, "")
+
   # Fixed constants: the Okta app's redirect URI (OIDC) / ACS + audience URLs
   # (SAML) embed the pool and provider ids, so they cannot be derived from the
   # created resources without a chicken-and-egg. These MUST agree with what the
   # Okta side registered — hence defaulting to the ids in its outputs.json.
-  wif_pool_id = coalesce(
+  # When borrowing, these come from the shared pool we are pointing at, not
+  # from the Okta side's outputs.json — the shared SAML app already embeds the
+  # shared ids in its ACS/audience URLs.
+  wif_pool_id = local.wif_borrow ? reverse(split("/", var.shared_workforce_pool))[0] : coalesce(
     try(local.okta_outputs.workforce_pool_id, null),
     local.name,
   )
-  wif_provider_id = coalesce(
+  wif_provider_id = local.wif_borrow ? var.shared_workforce_provider_id : coalesce(
     try(local.okta_outputs.workforce_pool_provider_id, null),
     var.okta_provider_type == "saml" ? "okta-saml" : "okta-oidc",
   )
