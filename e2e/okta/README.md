@@ -197,3 +197,30 @@ leaves a tombstone that blocks reuse of the id until it is undeleted or purged.
   configuring the shared `default` custom authorization server.
 - Work was done in the **preview** org (`cru.oktapreview.com`), not production
   (`signon.okta.com`).
+
+## Addition 2026-07-25: assignment on the SHARED app
+
+To test the shared org-wide workforce pool (`cru-workforce-preview`) rather than a
+dedicated one, the scratch test user was assigned **directly** to the pre-existing,
+Terraform-managed shared SAML app:
+
+| | |
+|---|---|
+| App | `Google Cloud Workforce (Shared)` — `0oa2smcngd9xM71eo0h8` |
+| User | `cru-iap-e2e-test@example.invalid` — `00u2sr49f3tpmox7b0h8` |
+| Scope | `USER` (direct), not a group |
+
+This app had **zero** user and zero group assignments beforehand (recorded before the
+change), so nothing pre-existing was displaced. It is drift from
+`cru-terraform/google/workforce-identity/okta-saml.tf`, which declares the app but no
+assignments, until someone reconciles it.
+
+**Teardown for this one item** (do it whenever the shared-pool test is finished, even
+if the rest of this scratch setup stays):
+
+```
+DELETE /api/v1/apps/0oa2smcngd9xM71eo0h8/users/00u2sr49f3tpmox7b0h8
+```
+
+Do NOT deactivate or delete app `0oa2smcngd9xM71eo0h8` itself — it is a shared,
+Terraform-managed object and is not ours.
