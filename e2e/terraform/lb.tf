@@ -24,7 +24,8 @@ resource "google_compute_global_address" "lb" {
 # finish provisioning — Google validates domain ownership by checking that the
 # name points at this LB. Zone is pre-existing and NOT managed here.
 resource "google_dns_record_set" "a" {
-  project      = var.project_id
+  provider     = google.dns
+  project      = var.dns_project
   managed_zone = data.google_dns_managed_zone.this.name
   name         = "${local.hostname}."
   type         = "A"
