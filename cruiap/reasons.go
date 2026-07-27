@@ -27,6 +27,7 @@ var Reasons = []string{
 	ReasonVerificationError,
 	ReasonUnexpectedError,
 	ReasonIAPJWT,
+	ReasonDevBypass,
 }
 
 const (
@@ -57,8 +58,11 @@ const (
 	ReasonVerificationError = "verification_error:"
 	// ReasonUnexpectedError is the fail-closed catch-all.
 	ReasonUnexpectedError = "unexpected_error"
-	// ReasonIAPJWT is the only reason for which OK is true.
+	// ReasonIAPJWT means a real IAP assertion verified. OK is true.
 	ReasonIAPJWT = "iap_jwt"
+	// ReasonDevBypass means DevBypass supplied the identity — no assertion was
+	// verified. OK is true, and it is unreachable in a managed runtime.
+	ReasonDevBypass = "dev_bypass"
 )
 
 // IsKnownReason reports whether reason is a member of the shared vocabulary:

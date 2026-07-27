@@ -5,9 +5,11 @@ files the same Datadog queries.
 
 Entries ending in ``:`` carry a variable suffix.
 
-If you add one here, add it to the other three too. A test in each language
-asserts its own verifier can only emit listed reasons; nothing mechanically
-enforces that the lists match each other, so keep them in step by hand.
+If you add one here, add it to the other three too — in the same ORDER, since
+the cross-language tests compare them element by element (``tests/test_package.py``
+checks Ruby and TypeScript against this list; ``cruiap/vocabulary_test.go`` checks
+all three against Go's). A test in each language additionally asserts its own
+verifier can only emit listed reasons.
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ REASONS: tuple[str, ...] = (
     "issuer_mismatch",
     "verification_error:",  #     + the PyJWT error name
     "unexpected_error",  #        fail-closed catch-all
-    "iap_jwt",  #                 the only ok is True reason
+    "iap_jwt",  #                 ok is True — a verified IAP assertion
+    "dev_bypass",  #              ok is True — dev_bypass(), never in production
 )
 
 

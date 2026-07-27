@@ -69,7 +69,8 @@ module CruIap
       "issuer_mismatch",
       "verification_error:",      # + the googleauth error class
       "unexpected_error",         # fail-closed catch-all
-      "iap_jwt"                   # the only ok? == true reason
+      "iap_jwt",                  # ok? == true — a verified IAP assertion
+      "dev_bypass"                # ok? == true — CruIap::DevBypass, never in prod
     ].freeze
 
     # Preferred entry point: pulls the assertion off the request itself, so
