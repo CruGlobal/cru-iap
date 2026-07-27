@@ -246,7 +246,42 @@ at *"who is this?"*.
       federated login cookie
 - [ ] Production logs emitted as JSON with a `severity` field, or Cloud Run drops
       Rails' stdout from the log sink and you'll debug the cutover blind
+- [ ] Every surface that authenticates *itself* is listed in the module's `bypass_paths`,
+      not just exempted in app code — see below
 - [ ] Decide what an *authorized-but-not-permitted* user sees — see below
+
+## Surfaces that authenticate themselves need `bypass_paths`
+
+An app-side exemption is **not enough on its own**, and this is the constraint most
+likely to take a cutover down. IAP rejects at the load balancer, before your gate runs:
+a webhook, a cron POST, or an OAuth token endpoint never reaches the middleware that
+would have waved it through. It gets IAP's 401 or a 302 to an Okta sign-in page it
+cannot complete, because there is nobody at a browser.
+
+So each one needs a path prefix in `bypass_paths` on
+`cru-terraform-modules gcp/cloudrun/app`, which routes it to the public backend service
+and skips both IAP and the sign-in redirect:
+
+```hcl
+iap = {
+  members      = ["principalSet://…/group/Flightdeck:Users"]
+  bypass_paths = ["/api/", "/oauth/", "/.well-known/", "/up"]
+}
+```
+
+The two halves are not redundant — they answer different questions. `bypass_paths`
+decides *what reaches the app*; the app-side exemption decides *what the app does with
+what arrives*, since a bypassed path gets no assertion header and must fall back to its
+own credential (a PAT, a signing secret, an OIDC token it verifies itself). Omit the
+terraform half and the surface is unreachable; omit the app half and it is unauthenticated.
+
+Worth enumerating deliberately, because the list is longer than it first looks. Bills
+had nine: SCIM, the MCP OAuth authorization server, its metadata document, the MCP
+transport, Slack, Cloud Scheduler, the public API, the health probe, and
+`/bill/<token>` for external recipients. Flightdeck has a comparable set — a Doorkeeper
+OIDC provider, a PAT-authenticated API, and Slack callbacks. A useful way to find them:
+every route your *old* auth already skipped is a candidate, and so is every client that
+holds a credential rather than a session.
 
 ## The access-denied page (authenticated, but not authorized)
 
@@ -353,6 +388,35 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
 
 9. **Load-balancer 302s masquerade as Rails redirects** when you are reading logs
    during a cutover. Check which layer actually issued them.
+
+8c. **The assertion carries no group membership.** There is no `groups` claim, and
+   nothing in the payload from which one can be derived — see
+   `spec/fixtures/real_wif_iap_payload.json`, whose entire top-level claim set is
+   `aud`, `azp`, `email`, `exp`, `iat`, `identity_source`, `iss`, `sub`, and the nested
+   `workforce_identity`. This is the single most expensive difference from an Okta OIDC
+   `id_token`, because a `groups` claim is how most of Cru's apps currently answer
+   *"may this person be here?"*:
+
+   | app | how it gated before IAP | what it must use after |
+   |---|---|---|
+   | flightdeck | `OKTA_REQUIRED_GROUP=Flightdeck:Users` from a `groups` claim | a DB or env authz source |
+   | dgt, dse-portal | Okta app assignment — *"any session that exists is allowed"* | the IAP IAM binding, same reasoning |
+   | beacon | `BEACON_ADMINS` env var | unchanged |
+   | cru-bot | `User#role` in the DB | unchanged |
+
+   The mitigation is that the *coarse* gate moves into infrastructure rather than
+   disappearing: `roles/iap.httpsResourceAccessor` accepts
+   `principalSet://…/group/<okta-group>`, so "must be in `Flightdeck:Users`" becomes an
+   IAM binding in cru-terraform and IAP enforces it before the app is reached. What you
+   cannot do app-side is make a *finer* decision from the group — read a role, branch on
+   department, show a different nav — because the app can no longer see the membership
+   that got the request through the door. Apps that need that must keep their own store.
+
+   Note the failure mode is silent and open, not closed: `claims["groups"]` is simply
+   `nil`, so a port that keeps its old `required_group.in?(claims["groups"])` check
+   rejects everyone, while one that keeps `claims["groups"]&.include?` or an
+   `unless groups.blank?` guard admits everyone. Grep for the group claim by name during
+   a cutover rather than trusting the tests to catch it.
 
 10. **Get logs flowing before you theorize.** Two of the wrong turns above were guesses
    written while Rails stdout was not reaching Datadog at all — the commit claiming a

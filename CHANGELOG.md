@@ -48,6 +48,33 @@ path only, and Google documents it as a paid-subscription feature though it appl
 without one here. Plus: IAP IAM changes take **well over five minutes** to propagate,
 which cost one false "the denial path doesn't work" reading.
 
+### Added — `[docs]` two gaps found while surveying the remaining Cloud Run apps
+
+Surveying the twelve apps still to cut over turned up two facts the README stated
+nowhere, both of which cost a deploy cycle to learn rather than to read.
+
+**The assertion carries no group membership** (gotcha 8c). No `groups` claim, and
+nothing to derive one from — the pinned real capture's whole top-level claim set is
+`aud`, `azp`, `email`, `exp`, `iat`, `identity_source`, `iss`, `sub`, and the nested
+`workforce_identity`. This is the most expensive difference from an Okta OIDC
+`id_token`, because a `groups` claim is how several apps currently decide *"may this
+person be here?"* — flightdeck reads `OKTA_REQUIRED_GROUP`, and dgt and dse-portal both
+reason from Okta app assignment. The coarse gate survives by moving into IAM
+(`principalSet://…/group/<okta-group>` on `roles/iap.httpsResourceAccessor`, enforced
+before the app is reached); what cannot survive app-side is a *finer* decision made from
+the group, because the app can no longer see the membership that admitted the request.
+The failure mode is silent and direction-dependent: a kept `required_group.in?(groups)`
+rejects everyone, while a kept `groups&.include?` admits everyone.
+
+**Surfaces that authenticate themselves need `bypass_paths`, not just an app-side
+exemption.** IAP rejects at the load balancer, before the gate runs, so a webhook or a
+cron POST never reaches the middleware that would have waved it through. The two halves
+are not redundant: `bypass_paths` decides what reaches the app, the app-side exemption
+decides what the app does with a request that arrives carrying no assertion. Omit the
+terraform half and the surface is unreachable; omit the app half and it is
+unauthenticated. Bills had nine such surfaces and flightdeck has a comparable set, so
+the checklist now says to enumerate them deliberately.
+
 ### Removed — `[ruby]` two behaviors inherited from beacon that were based on a wrong theory
 
 Investigation on 2026-07-25 recovered a captured live IAP payload (keep-zero POC
