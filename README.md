@@ -466,7 +466,8 @@ test (`cruiap/vocabulary_test.go`).
 CRU_IAP_DEV_BYPASS_EMAIL=you@cru.org bin/rails server
 ```
 
-Compose it in front of the real verify. One line, no branch:
+Compose it in front of the real verify — one expression in the three languages
+that have a value-returning `or`, and a two-line branch in Go:
 
 ```ruby
 result = CruIap.dev_bypass || CruIap::TokenVerifier.from_request(request)
