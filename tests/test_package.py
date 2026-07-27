@@ -1,0 +1,87 @@
+"""Promises the package makes about itself.
+
+Mirrors ``test/unit/package.test.ts``. These are cheap and they catch the class
+of mistake that only shows up in a consumer: a missing export, an accidental
+framework import, a reason list that drifted from its sibling.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import cru_iap
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_exports_the_public_surface():
+    for name in (
+        "verify",
+        "verify_request",
+        "assertion_from",
+        "Result",
+        "REASONS",
+        "is_known_reason",
+        "HEADER",
+        "IAP_ISSUER",
+        "IAP_JWKS_URL",
+        "reset_jwks_cache",
+    ):
+        assert hasattr(cru_iap, name), f"cru_iap.{name} is not exported"
+
+
+def test_all_matches_what_is_actually_exported():
+    for name in cru_iap.__all__:
+        assert hasattr(cru_iap, name), f"__all__ names {name}, which does not exist"
+
+
+def test_imports_no_web_framework():
+    # The package must work in FastAPI, Django, Flask and a bare WSGI app, which
+    # means importing none of them. Checked in a subprocess so this test's own
+    # imports (and pytest's) can't mask a leak.
+    probe = (
+        "import sys, cru_iap; "
+        "leaked = [m for m in ('fastapi','starlette','django','flask','werkzeug') "
+        "if m in sys.modules]; "
+        "print(','.join(leaked))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+
+    assert result.stdout.strip() == "", f"cru_iap pulled in {result.stdout.strip()}"
+
+
+def test_the_reason_list_matches_the_ruby_gem():
+    # Nothing mechanically keeps the four languages' vocabularies in step, so
+    # compare them here — this is the cheapest place to notice a drift, and the
+    # Datadog queries every Cru app files depend on the lists agreeing.
+    ruby = (ROOT / "lib" / "cru_iap" / "token_verifier.rb").read_text()
+    block = re.search(r"REASONS = \[(.*?)\]\.freeze", ruby, re.S)
+    assert block, "could not find REASONS in the Ruby verifier"
+    ruby_reasons = re.findall(r'"([^"]+)"', block.group(1))
+
+    assert list(cru_iap.REASONS) == ruby_reasons
+
+
+def test_the_reason_list_matches_the_typescript_package():
+    typescript = (ROOT / "src" / "reasons.ts").read_text()
+    block = re.search(r"export const REASONS = \[(.*?)\] as const;", typescript, re.S)
+    assert block, "could not find REASONS in the TypeScript package"
+    ts_reasons = re.findall(r'"([^"]+)"', block.group(1))
+
+    assert list(cru_iap.REASONS) == ts_reasons
+
+
+def test_iap_jwt_is_the_only_success_reason():
+    assert "iap_jwt" in cru_iap.REASONS
+
+
+def test_the_jwks_url_is_the_jwk_endpoint_not_the_pem_one():
+    # The bare .../iap/verify/public_key endpoint serves a PEM map, which is not
+    # parseable as a JWK set. Pinned because the difference is one suffix and
+    # the failure is a confusing parse error at runtime.
+    assert cru_iap.IAP_JWKS_URL.endswith("public_key-jwk")

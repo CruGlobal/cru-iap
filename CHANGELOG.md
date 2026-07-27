@@ -48,6 +48,55 @@ path only, and Google documents it as a paid-subscription feature though it appl
 without one here. Plus: IAP IAM changes take **well over five minutes** to propagate,
 which cost one false "the denial path doesn't work" reading.
 
+### Added — `[python]` a Python sibling, for the FastAPI apps
+
+`cru-iap` on PyPI-style install from the bare repo
+(`uv add "cru-iap @ git+https://github.com/CruGlobal/cru-iap"`), for Cru's FastAPI apps —
+dgt and dse-portal, both of which run authlib Okta OIDC today. Same rejection
+vocabulary, same claim-shape decisions, same pinned real-capture fixture.
+
+- `verify(assertion, audience=…, jwks=…, leeway_seconds=…, log=…)` and
+  `verify_request(source, …)`, which accepts a Starlette/FastAPI `Request`, a Django
+  `HttpRequest` (via `.headers` or `.META`), a Flask/Werkzeug `request`, a bare WSGI
+  `environ`, or a plain header mapping.
+- `assertion_from`, `HEADER`, `WSGI_ENVIRON_KEY`, `REASONS`, `is_known_reason`,
+  `Result`, `IAP_ISSUER`, `IAP_JWKS_URL`, `reset_jwks_cache`.
+- `Result` is a frozen dataclass, so a caller cannot launder a rejection into a pass by
+  assignment, and is truthy when `ok`.
+
+Built on **PyJWT**, not `google-auth` or authlib. `google.oauth2.id_token` raises
+`ValueError` with a prose message for a bad audience, a bad issuer and an expired token
+alike, which would leave the shared reason vocabulary matched on substrings; PyJWT has
+one exception class per condition. authlib was the other candidate — both consumers
+already depend on it — but its JWK handling has no caching client, whereas
+`PyJWKClient(lifespan=3600)` matches the Ruby googleauth key source's one hour, so this
+can be called per request without a gstatic.com round-trip each time.
+
+Three deliberate divergences, all documented in the module:
+- **Synchronous**, because PyJWT and its key fetch are. FastAPI consumers should declare
+  the dependency with `def` rather than `async def` so it runs in a threadpool — an
+  `async def` would block the event loop on the hourly JWKS refresh.
+- **Logging follows the Python convention** rather than the gem's `CruIap.logger =`
+  setter: `logging.getLogger("cru_iap")` with a `NullHandler`, so there is no global to
+  set and the library is silent until the app configures logging.
+- A non-string `email` claim is **rejected explicitly** even though Python's `str()`
+  renders list brackets and so would have failed the shape gate anyway (as Ruby's does,
+  unlike JavaScript's). Relying on `repr()` for a security decision is a coincidence,
+  not a design.
+
+**PyJWT has the same missing-`exp` hole as jose and the Ruby jwt gem** — it skips the
+expiry check when the claim is absent rather than failing — so the verifier passes
+`options={"require": ["exp"]}`. That makes three independent JWT libraries in three
+languages with identical behaviour, which is no longer a coincidence but the default to
+expect; gotcha 8 now says so. Each language's suite carries a negative-control test that
+verifies the same token *without* the requirement and asserts it is accepted, so the
+guard is provably load-bearing rather than decorative.
+
+82 tests, offline. One of them parses `REASONS` out of `lib/cru_iap/token_verifier.rb`
+**and** `src/reasons.ts` and asserts all three lists are identical — the first
+mechanical check that the shared Datadog vocabulary hasn't drifted between languages,
+which until now was maintained by hand and by hope.
+
 ### Added — `[docs]` two gaps found while surveying the remaining Cloud Run apps
 
 Surveying the twelve apps still to cut over turned up two facts the README stated

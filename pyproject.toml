@@ -1,0 +1,38 @@
+[project]
+name = "cru-iap"
+version = "0.1.0"
+description = "Verify Google Identity-Aware Proxy assertion JWTs. Python sibling of the cru_iap Ruby gem and the @cruglobal/cru-iap npm package."
+readme = "README.md"
+license = { file = "LICENSE.txt" }
+authors = [{ name = "Matt Drees", email = "matt.drees@cru.org" }]
+requires-python = ">=3.11"
+
+# PyJWT for the typed-exception-per-failure-mode surface the shared reason
+# vocabulary needs, and for PyJWKClient's caching key source. `crypto` pulls in
+# `cryptography`, without which ES256 is unavailable — IAP signs with nothing
+# else, so it is not optional here.
+dependencies = ["pyjwt[crypto]>=2.9"]
+
+[project.urls]
+Homepage = "https://github.com/CruGlobal/cru-iap"
+Changelog = "https://github.com/CruGlobal/cru-iap/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-cov>=6.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The repo root holds four languages. Name the package explicitly so the build
+# doesn't try to infer one from a directory listing that includes lib/, src/,
+# cruiap/ and spec/.
+[tool.hatch.build.targets.wheel]
+packages = ["cru_iap"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Offline by default, like the Ruby and TypeScript suites: nothing in tests/
+# touches the network. `-p no:randomly` is not needed — order independence is
+# not assumed anywhere, but the JWKS cache is reset per-test regardless.
+addopts = "-q"
