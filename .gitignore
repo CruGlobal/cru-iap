@@ -29,3 +29,14 @@ Gemfile.lock
 /node_modules/
 /dist/
 *.tsbuildinfo
+
+# Python package: local venv, bytecode, and test/build caches. uv.lock IS
+# committed — it pins the dev toolchain, and the runtime dependency range lives
+# in pyproject.toml, so a consumer resolving `pip install git+…` is unaffected.
+/.venv/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.coverage
+/build/
+/*.egg-info/

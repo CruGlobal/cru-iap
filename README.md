@@ -6,40 +6,51 @@ Okta federated in via **Workforce Identity Federation**.
 Extracted from [beacon](https://github.com/CruGlobal/beacon) after its 2026-07 IAP
 cutover, ahead of the same cutover in cru-bot.
 
-**Two libraries, one repo**, because Cru's apps behind IAP are Rails *and* Node and the
-claim-shape knowledge below was expensive enough that maintaining two copies of it
-would be a mistake:
+**Several libraries, one repo**, because Cru's apps behind IAP are Rails *and* Node
+*and* FastAPI *and* Go, and the claim-shape knowledge below was expensive enough that
+maintaining four copies of it would be a mistake:
 
 ```ruby
 gem "cru_iap", github: "CruGlobal/cru-iap"
 ```
 ```sh
-npm install github:CruGlobal/cru-iap    # @cruglobal/cru-iap
+npm install github:CruGlobal/cru-iap                    # @cruglobal/cru-iap
+uv add "cru-iap @ git+https://github.com/CruGlobal/cru-iap"
 ```
 
 (Underscored gem name, hyphenated repo — so `Bundler.require` resolves straight to
 `lib/cru_iap.rb` without a shim file. The npm package builds on install via `prepare`,
-which is why a git install works without a registry.)
+which is why a git install works without a registry. All install from the bare repo URL,
+which is why each language's manifest sits at the root rather than in a subdirectory.)
 
-| | Ruby | TypeScript |
-|---|---|---|
-| Source | `lib/` | `src/` |
-| Tests | `spec/` | `test/` |
-| Runtime dep | `googleauth` | `jose` |
-| Shared | `e2e/` (terraform + Okta), `spec/fixtures/real_wif_iap_payload.json` | |
+| | Ruby | TypeScript | Python |
+|---|---|---|---|
+| Source | `lib/` | `src/` | `cru_iap/` |
+| Tests | `spec/` | `test/` | `tests/` |
+| Runtime dep | `googleauth` | `jose` | `pyjwt[crypto]` |
+| Entry point | `CruIap::TokenVerifier.from_request` | `verifyRequest` | `verify_request` |
+| Shared | `e2e/` (terraform + Okta), `spec/fixtures/real_wif_iap_payload.json` | | |
 
-Both read the same pinned capture of a real Google assertion, so the two cannot quietly
-drift apart about what IAP actually sends.
+All read the same pinned capture of a real Google assertion, so they cannot quietly
+drift apart about what IAP actually sends — and the Python suite additionally parses the
+Ruby and TypeScript `REASONS` lists and asserts all three match, so the shared Datadog
+vocabulary can't drift either.
+
+Which library a given app needs is not a free choice — it follows from the app. As of
+2026-07: beacon and cru-bot are Rails; bills, cru-web-campaign and pingpong are Next.js;
+dgt and dse-portal are FastAPI; wormhole is Go.
 
 ## What it does
 
 | | |
 |---|---|
-| `CruIap::TokenVerifier` / `verify`, `verifyRequest` | Verify the IAP assertion JWT on a request; return an email identity or a typed rejection reason |
+| `CruIap::TokenVerifier` / `verify`, `verifyRequest` / `verify`, `verify_request` | Verify the IAP assertion JWT on a request; return an email identity or a typed rejection reason |
 | `CruIap::StripForwardedHost` | Drop a client-forged `X-Forwarded-Host` before anything reads `request.host` (Ruby only — see below) |
 
 No Rails or ActiveSupport dependency — `googleauth` only. The TypeScript package
 depends only on `jose`, and touches no `node:` builtin, so it runs on the Edge runtime.
+The Python package depends only on `pyjwt[crypto]` and imports no web framework, which
+a test enforces in a subprocess so its own imports can't mask a leak.
 
 ## What this gem is *not*
 
@@ -225,6 +236,85 @@ remains is the middleware above plus whatever `provisionUser` already did on fir
 sign-in. Session strategy, roles, and authorization are untouched — this library stops
 at *"who is this?"*.
 
+## Usage (Python)
+
+`IAP_AUDIENCE` works exactly as above — same env var, same two shapes, same
+fail-closed-if-unset rule. It is read at *call* time, not import time.
+
+```python
+from cru_iap import verify_request
+
+result = verify_request(request)
+
+if result.ok:
+    user = provision_user(email=result.email, name=result.name)
+else:
+    log.warning("IAP auth rejected: %s", result.reason)
+    # fail closed — never fall through to a dev stub
+```
+
+`Result` is a frozen dataclass (so a caller can't launder a rejection into a pass by
+assignment) and is truthy when `ok`, so `if verify_request(request):` reads fine too.
+`verify_request` accepts a Starlette/FastAPI `Request`, a Django `HttpRequest` (via
+either `.headers` or `.META`), a Flask/Werkzeug `request`, a bare WSGI `environ`, or a
+plain header mapping — application code never names the header. `verify(token)` is the
+lower-level form.
+
+Both take `audience`, `jwks`, `leeway_seconds` and `log` keyword overrides.
+
+Two Python-specific notes:
+
+- **The verifier is synchronous**, because PyJWT and its key fetch are. In FastAPI,
+  declare the dependency with `def` rather than `async def` and FastAPI runs it in a
+  threadpool automatically — which is what you want, since an `async def` dependency
+  would block the event loop on the once-an-hour JWKS refresh.
+- **Logging follows the Python convention** rather than the gem's `CruIap.logger =`
+  setter. The package logs to `logging.getLogger("cru_iap")` with a `NullHandler`
+  attached, so it is silent until your app configures logging and there is no global to
+  set.
+
+### Reference wiring (FastAPI dependency)
+
+The dependency is the right seam: one gate, applied per-router or app-wide, resolved
+once per request by FastAPI's own dependency cache.
+
+```python
+# backend/auth.py
+from fastapi import Depends, HTTPException, Request
+from cru_iap import verify_request
+
+def current_user(request: Request) -> User:
+    # Gate the dev bypass on deploy config, never on the header being absent.
+    # "No header → local stub" is the one fallback that must be impossible in
+    # production.
+    if not settings.iap_audience:
+        return dev_stub_user()
+
+    result = verify_request(request)
+    if not result.ok:
+        log.warning("iap_rejected reason=%s", result.reason)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return provision_from_iap(email=result.email, name=result.name)
+```
+
+### Replacing authlib's Okta OIDC
+
+For an app currently doing its own Okta OIDC through authlib (dgt and dse-portal, as of
+2026-07), the cutover deletes the client rather than reconfiguring it: no
+`oauth.register(name="okta", …)`, no `/auth/oktaoauth/login` or `/callback` route, no
+`OKTA_CLIENT_SECRET`, no `OKTA_REDIRECT_URI`, and — if nothing else uses it — no
+`SessionMiddleware` or `SESSION_SECRET`, since there is no longer a session cookie to
+sign. What remains is the dependency above plus whatever the callback already did on
+first sign-in.
+
+One thing that does *not* survive: both apps currently reason *"any session that exists
+is an allowed user, because Okta only lets assigned users complete the flow."* That
+inference still holds under IAP, but the enforcement moves — it becomes the
+`roles/iap.httpsResourceAccessor` binding in cru-terraform rather than the Okta app
+assignment. Read gotcha 8c before assuming the group is still visible app-side; it
+isn't.
+
 ## Deployment checklist
 
 - [ ] `IAP_AUDIENCE` set from the terraform module output
@@ -375,16 +465,23 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
    verifier shouldn't depend on IAP always setting it. Same class of trap as gotcha 5:
    a validator that silently passes on missing input.
 
-   **`jose` has the identical hole** — it skips the expiry check when `exp` is absent
-   rather than failing — so the TypeScript side passes `requiredClaims: ["exp"]`. Two
-   independent JWT libraries in two languages made the same choice; assume the next one
-   does too and check rather than trust.
+   **`jose` and `PyJWT` have the identical hole** — both skip the expiry check when `exp`
+   is absent rather than failing — so the TypeScript side passes
+   `requiredClaims: ["exp"]` and the Python side `options={"require": ["exp"]}`. That is
+   now **three independent JWT libraries in three languages making the same choice**,
+   which stops being a coincidence and starts being the default you should expect.
+   Assume the next one does too, and check rather than trust: each language's suite
+   carries a negative-control test that verifies the token *without* the requirement and
+   asserts it is accepted, so the guard is provably load-bearing rather than decorative.
 
 8b. **Don't coerce the `email` claim to a string in JavaScript.**
    `String(["alice@cru.org"])` is `"alice@cru.org"`, so a multi-address array claim
    would coerce into a single accepted identity. Ruby's `Array#to_s` renders the
    brackets and rejects, which is why the Ruby verifier can safely `.to_s` and the
-   TypeScript one cannot. A shape gate is only as good as what it is handed.
+   TypeScript one cannot. Python's `str()` renders the brackets like Ruby's, so it would
+   also have rejected — but the Python verifier still checks `isinstance(raw, str)`
+   explicitly, because relying on `repr()` for a security decision is a coincidence
+   rather than a design. A shape gate is only as good as what it is handed.
 
 9. **Load-balancer 302s masquerade as Rails redirects** when you are reading logs
    during a cutover. Check which layer actually issued them.
@@ -426,8 +523,8 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
 ## Rejection reasons
 
 `CruIap::TokenVerifier::REASONS` / `REASONS` is the shared vocabulary — shared across
-*both languages*, so every app behind IAP files the same Datadog queries whether it is
-Rails or Node. Entries ending in `:` carry a variable suffix.
+*every language here*, so every app behind IAP files the same Datadog queries whether it
+is Rails, Node, FastAPI or Go. Entries ending in `:` carry a variable suffix.
 
 `missing_token` · `missing_audience_config` · `bad_iss:` · `missing_exp` ·
 `missing_email` · `malformed_subject` · `signature_error:` · `audience_mismatch` ·
@@ -435,15 +532,23 @@ Rails or Node. Entries ending in `:` carry a variable suffix.
 `iap_jwt` (the only `ok?` reason)
 
 A test in each language asserts its verifier can only produce listed reasons, so the
-vocabulary can't drift silently. Nothing mechanically enforces that the *two lists*
-match — if you add a reason, add it in both places.
+vocabulary can't drift silently within a language. Across languages, the **Python suite
+parses the Ruby and TypeScript lists out of their source and asserts all three are
+identical** — so a reason added in one place and forgotten in another fails there. Add a
+reason in every language at once.
 
-Two mappings are worth knowing because the underlying libraries differ:
+Three mappings are worth knowing because the underlying libraries differ:
 
-| condition | Ruby (googleauth) | TypeScript (jose) |
-|---|---|---|
-| token's `kid` not in the JWKS | `signature_error:Token not verified as issued by Google` | `signature_error:no_matching_key` |
-| JWKS unreachable / non-200 / unparseable | `verification_error:KeySourceError` | `verification_error:KeySourceError` |
+| condition | Ruby (googleauth) | TypeScript (jose) | Python (PyJWT) |
+|---|---|---|---|
+| token's `kid` not in the JWKS | `signature_error:Token not verified as issued by Google` | `signature_error:no_matching_key` | `signature_error:no_matching_key` |
+| JWKS unreachable / non-200 / unparseable | `verification_error:KeySourceError` | `verification_error:KeySourceError` | `verification_error:KeySourceError` |
+
+PyJWT needs the same care as jose here for the same reason: `PyJWKClient` raises the
+plain base `PyJWKClientError` for two unrelated conditions — no matching `kid`, and a
+JWKS that fetched but wouldn't parse — distinguishable only by message. The connection
+case has its own subclass (`PyJWKClientConnectionError`), so only those two share a
+class, and the message check that separates them is pinned by a test.
 
 jose reports a non-200 JWKS response as its *base* `JOSEError` class. Keying off that
 looks alarmingly broad, so it was checked: those are the only two sites in the whole
@@ -455,7 +560,9 @@ The verifier is silent except for two `warn`s: `malformed_subject` (which dumps 
 full JWT payload, so an unexpected principal shape is diagnosable without
 re-deploying instrumentation) and the fail-closed catch-all. The payload is identity
 claims, not credentials — the same sensitivity as the emails already in your request
-logs. It defaults to a null logger until you set `CruIap.logger` / pass `logger:`.
+logs. It defaults to a null logger until you set `CruIap.logger` / pass `logger:` /
+pass `log=`; in Python it logs to `logging.getLogger("cru_iap")` with a `NullHandler`
+attached, so configuring logging in your app is the only step needed.
 
 ## Development
 
@@ -469,9 +576,13 @@ npm install
 npm test                      # unit only — offline, no credentials
 npm run typecheck
 npm run test:e2e              # LIVE: real Okta sign-in through real IAP
+
+# Python
+uv sync --group dev
+uv run pytest                 # offline, no credentials
 ```
 
-Neither default suite touches the network. `npm run test:e2e` does — see below.
+No default suite touches the network. `npm run test:e2e` does — see below.
 
 ### End-to-end against live IAP
 
