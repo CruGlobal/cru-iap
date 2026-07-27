@@ -6,6 +6,26 @@ on:
   pull_request:
 
 jobs:
+  # The only job here that touches the network, and the only one that can catch
+  # Google changing the contract all four libraries share. Deliberately not
+  # gated on any language's toolchain or dependencies: it is stdlib-only Node,
+  # so it still reports even when a language job is broken.
+  #
+  # The other half of e2e/smoke.mjs (`iap-front`) is NOT run here — it needs a
+  # standing IAP stack, and the e2e stack is created on demand and torn down
+  # again. It runs inside the e2e workflow, after apply.
+  smoke:
+    name: Smoke (Google JWKS contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Google's key endpoint still serves ES256 / P-256 keys
+        run: node e2e/smoke.mjs jwks
+
   spec:
     name: Ruby
     runs-on: ubuntu-latest
