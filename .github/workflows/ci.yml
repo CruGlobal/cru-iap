@@ -54,3 +54,55 @@ jobs:
       # NOT run here — it needs live GCP and Okta credentials.
       - name: Unit tests
         run: npm test
+
+  pytest:
+    name: Python
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.11 is the floor declared in pyproject.toml; 3.13 is current stable.
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # --frozen so a stale uv.lock fails the build rather than being silently
+      # re-resolved into something no one has run.
+      - name: Unit tests
+        run: uv run --frozen --python ${{ matrix.python }} pytest
+
+  gotest:
+    name: Go
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 1.25 is the floor in go.mod and what wormhole runs; 1.26 is current.
+        go: ["1.25", "1.26"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      # The package is stdlib-only by design, so there is nothing to download
+      # and a `go mod tidy` diff is a real regression rather than churn.
+      # `git status --porcelain` rather than `git diff`: go.sum does not exist,
+      # and diff treats an absent pathspec as a fatal error.
+      - name: Tidy is a no-op (no dependencies crept in)
+        run: |
+          set -euo pipefail
+          go mod tidy
+          if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
+            git status --porcelain go.mod go.sum
+            echo "::error::go mod tidy changed go.mod/go.sum — a dependency crept into a stdlib-only package"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./cruiap/...
+
+      # The e2e suite is behind the `e2e` build tag and so is not compiled here.
+      - name: Unit tests
+        run: go test ./cruiap/...
