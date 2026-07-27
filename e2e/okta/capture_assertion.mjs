@@ -13,10 +13,16 @@
 // visible once we are through.
 //
 //   node capture_assertion.mjs [--headed] [--url https://...]
+//                              [--json [path]] [--audience <resource path>]
 //
 // Credentials come from secrets.json (gitignored) and outputs.json.
+//
+// --json writes the capture to a file (default e2e/okta/capture.json) so that
+// all four language suites can verify ONE login rather than each driving its
+// own browser: four captures would be ~12 minutes and four independent chances
+// to flake. See e2e/README.md.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -35,6 +41,27 @@ const TARGET =
   urlArg !== -1
     ? args[urlArg + 1]
     : "https://cru-iap-wif.matt-sandbox.ustech.app/?login=true";
+
+// --json, --json <path>, or absent.
+const jsonArg = args.indexOf("--json");
+const jsonNext = jsonArg === -1 ? null : args[jsonArg + 1];
+const JSON_PATH =
+  jsonArg === -1
+    ? null
+    : jsonNext && !jsonNext.startsWith("--")
+      ? jsonNext
+      : join(here, "capture.json");
+
+// The audience is CONFIGURATION, not something to read off the token. Deriving
+// it from the `aud` claim would make every suite's positive verify vacuous —
+// the check would be "does aud equal aud". Comes from `terraform output
+// iap_audience`; recorded as null when unknown, and each suite then falls back
+// to its own env var / default.
+const audienceArg = args.indexOf("--audience");
+const AUDIENCE =
+  audienceArg !== -1
+    ? args[audienceArg + 1]
+    : (process.env["CRU_IAP_E2E_AUDIENCE"] ?? null);
 
 const USERNAME = outputs.test_user_email ?? outputs.test_user?.email;
 const PASSWORD = secrets.test_user_password;
@@ -190,9 +217,38 @@ console.log(jwt);
 
 // Also surface the two headers IAP sets alongside the JWT, since their prefix
 // shapes are part of what the gem's docs claim.
+const iapHeaders = {};
 for (const h of ["x-goog-authenticated-user-email", "x-goog-authenticated-user-id"]) {
   const hm = text.match(new RegExp(`${h}=([^\\s]+)`));
-  if (hm) console.log(`${h}=${hm[1]}`);
+  if (hm) {
+    console.log(`${h}=${hm[1]}`);
+    iapHeaders[h] = hm[1];
+  }
+}
+
+if (JSON_PATH) {
+  writeFileSync(
+    JSON_PATH,
+    JSON.stringify(
+      {
+        // Seconds, to match the JWT's own units and every language's clock.
+        captured_at: Math.floor(Date.now() / 1000),
+        url: TARGET,
+        assertion: jwt,
+        claims,
+        audience: AUDIENCE,
+        expected_email: USERNAME,
+        iap_headers: iapHeaders,
+        navigation_trail: trail,
+      },
+      null,
+      2,
+    ) + "\n",
+    // The assertion is a live credential for ~10 minutes. Same posture as
+    // secrets.json next to it.
+    { mode: 0o600 },
+  );
+  console.log(`\nwrote ${JSON_PATH}`);
 }
 
 await browser.close();

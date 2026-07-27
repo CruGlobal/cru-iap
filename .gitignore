@@ -23,6 +23,10 @@ Gemfile.lock
 /e2e/okta/node_modules/
 /e2e/okta/capture-failure.png
 
+# E2E capture artifact: a live IAP assertion (~10 min) plus the signed-in
+# identity. Shared between the four language e2e suites; never committed.
+/e2e/okta/capture.json
+
 # TypeScript package: build output and local deps. dist/ is built by the
 # `prepare` script on install, including for `npm i github:CruGlobal/cru-iap`,
 # so it is never committed.
