@@ -1,10 +1,9 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
 
-import { HEADER, IAP_JWKS_URL, verify, verifyRequest } from "../../src/index.js";
+import { HEADER, verify, verifyRequest } from "../../src/index.js";
 import { Keypair } from "../support/iap-jwt.js";
+import { loadCapture } from "../support/capture.js";
 
 /**
  * End-to-end against LIVE Google infrastructure.
@@ -14,70 +13,41 @@ import { Keypair } from "../support/iap-jwt.js";
  * assertion Google actually injected is fed to the verifier — which fetches
  * Google's real JWKS over the real network to check the real signature.
  *
- * This is the only test that can answer the question the offline suite cannot:
- * *does a correctly configured workforce pool emit an `email` claim, and does
- * this library accept the token Google actually mints?*
+ * This is the only kind of test that can answer the question the offline suite
+ * cannot: *does a correctly configured workforce pool emit an `email` claim,
+ * and does this library accept the token Google actually mints?*
  *
- * Requirements (all provisioned by e2e/terraform + e2e/okta):
+ * The capture itself is NOT driven from here. `e2e/okta/capture_assertion.mjs
+ * --json` writes one artifact and the Ruby, Python, Go and TypeScript suites
+ * all verify against it — see test/support/capture.ts for why. Run the whole
+ * set with `e2e/run_all.sh`, or this suite alone with `npm run test:e2e` once
+ * an artifact exists.
  *
- *   - the `wif` terraform workspace applied — see e2e/terraform/README.md
- *   - e2e/okta/secrets.json present (test-user password + TOTP secret)
- *   - `npm --prefix e2e/okta install` (Playwright + its chromium)
- *   - network egress to gstatic.com, the LB, and cru.oktapreview.com
+ * Two things deliberately live elsewhere rather than being duplicated here:
  *
- * Run with `npm run test:e2e`. Never runs under `npm test`, and skips itself
- * with a reason rather than failing when the stack is down.
+ *   - "is IAP actually in front of the host" → `node e2e/smoke.mjs iap-front`,
+ *     which is language-agnostic and needs no capture. Keeping it there is
+ *     also what stops the expected pool/provider id from being hardcoded in
+ *     four test files, where it would rot the day the stack moves.
+ *   - "does Google's key endpoint serve ES256/P-256" → `node e2e/smoke.mjs
+ *     jwks`, wired into CI on every PR. The library's own constant is pinned
+ *     offline in test/unit/remote-jwks.test.ts.
  */
 
-const repoRoot = new URL("../../", import.meta.url);
-const oktaDir = fileURLToPath(new URL("e2e/okta/", repoRoot));
+const loaded = loadCapture();
+const skipReason = typeof loaded === "string" ? loaded : null;
 
-const LIVE_URL = process.env["CRU_IAP_E2E_URL"] ?? "https://cru-iap-wif.matt-sandbox.ustech.app/";
-const LIVE_AUDIENCE =
-  process.env["CRU_IAP_E2E_AUDIENCE"] ??
-  "/projects/898330966415/global/backendServices/2605597618877293205";
-const EXPECTED_EMAIL =
-  process.env["CRU_IAP_E2E_EMAIL"] ?? "cru-iap-e2e-test@example.invalid";
-
-/** Assertions are short-lived (~600s), so capture once and reuse across the file. */
-let assertion: string;
-let liveClaims: Record<string, unknown>;
-
-const missingPrereq = (): string | null => {
-  if (!existsSync(new URL("secrets.json", `file://${oktaDir}`))) {
-    return "e2e/okta/secrets.json is absent — the Okta scratch setup has been torn down";
-  }
-  if (!existsSync(new URL("node_modules/playwright", `file://${oktaDir}`))) {
-    return "playwright is not installed — run `npm --prefix e2e/okta install`";
-  }
-  return null;
-};
-
-const skipReason = missingPrereq();
-
-describe.skipIf(skipReason !== null)(`live IAP at ${LIVE_URL}`, () => {
-  beforeAll(() => {
-    // The capture script drives a headless browser through Okta primary auth,
-    // a TOTP challenge, the SAML leg, and the IAP callback. Several minutes of
-    // real network in the worst case.
-    const stdout = execFileSync(
-      process.execPath,
-      ["capture_assertion.mjs", "--url", `${LIVE_URL}?login=true`],
-      { cwd: oktaDir, encoding: "utf8", timeout: 170_000 },
-    );
-
-    const match = stdout.match(/=== assertion ===\s*\n([A-Za-z0-9._-]+)/);
-    if (!match?.[1]) throw new Error(`no assertion in capture output:\n${stdout}`);
-    assertion = match[1];
-    liveClaims = JSON.parse(
-      Buffer.from(assertion.split(".")[1]!, "base64url").toString(),
-    ) as Record<string, unknown>;
-  }, 180_000);
+describe.skipIf(skipReason !== null)("live IAP", () => {
+  // Non-null by construction inside this block; the skipIf above guarantees it.
+  const { assertion, claims: liveClaims, audience, expectedEmail } = loaded as Exclude<
+    typeof loaded,
+    string
+  >;
 
   describe("the real assertion", () => {
-    it("was minted by Google seconds ago, not replayed from a fixture", () => {
-      // Guards the whole file: every assertion below is only meaningful if
-      // the capture really drove a live sign-in. A stale or hand-copied token
+    it("was minted by Google minutes ago, not replayed from a fixture", () => {
+      // Guards the whole file: every assertion below is only meaningful if the
+      // capture really drove a live sign-in. A stale or hand-copied token
       // fails here rather than silently making the rest of the suite a
       // re-test of the offline fixtures.
       const age = Math.floor(Date.now() / 1000) - Number(liveClaims["iat"]);
@@ -91,26 +61,28 @@ describe.skipIf(skipReason !== null)(`live IAP at ${LIVE_URL}`, () => {
       // No `jwks` option: this goes over the wire to
       // https://www.gstatic.com/iap/verify/public_key-jwk and checks the
       // signature Google produced with a key we have never seen.
-      const result = await verify(assertion, { audience: LIVE_AUDIENCE });
+      const result = await verify(assertion, { audience });
 
       expect(result).toMatchObject({
         ok: true,
         reason: "iap_jwt",
-        email: EXPECTED_EMAIL,
+        email: expectedEmail,
       });
     });
 
     it("verifies straight off a request carrying the header, as an app would", async () => {
-      const request = new Request(LIVE_URL, { headers: { [HEADER]: assertion } });
+      const request = new Request("https://example.invalid/", {
+        headers: { [HEADER]: assertion },
+      });
 
-      const result = await verifyRequest(request, { audience: LIVE_AUDIENCE });
+      const result = await verifyRequest(request, { audience });
 
       expect(result.ok).toBe(true);
-      expect(result.email).toBe(EXPECTED_EMAIL);
+      expect(result.email).toBe(expectedEmail);
     });
 
     it("has no name claim, so display names must fall back to the local part", async () => {
-      const result = await verify(assertion, { audience: LIVE_AUDIENCE });
+      const result = await verify(assertion, { audience });
 
       expect(result.name).toBeNull();
     });
@@ -130,7 +102,7 @@ describe.skipIf(skipReason !== null)(`live IAP at ${LIVE_URL}`, () => {
         signature,
       ].join(".");
 
-      const result = await verify(forged, { audience: LIVE_AUDIENCE });
+      const result = await verify(forged, { audience });
 
       expect(result.ok).toBe(false);
       expect(result.reason).toMatch(/^signature_error:/);
@@ -138,9 +110,12 @@ describe.skipIf(skipReason !== null)(`live IAP at ${LIVE_URL}`, () => {
     });
 
     it("rejects the genuine token against a different backend service", async () => {
-      const result = await verify(assertion, {
-        audience: "/projects/898330966415/global/backendServices/1111111111111111111",
-      });
+      // Same project, different backend-service id: the shape is right and
+      // only the value is wrong, which is the realistic misconfiguration.
+      const otherAudience = audience.replace(/\d+$/, "1111111111111111111");
+      expect(otherAudience).not.toBe(audience);
+
+      const result = await verify(assertion, { audience: otherAudience });
 
       expect(result).toMatchObject({ ok: false, reason: "audience_mismatch" });
     });
@@ -161,7 +136,7 @@ describe.skipIf(skipReason !== null)(`live IAP at ${LIVE_URL}`, () => {
         exp: Math.floor(Date.now() / 1000) + 600,
       });
 
-      const result = await verify(forged, { audience: LIVE_AUDIENCE });
+      const result = await verify(forged, { audience });
 
       expect(result).toMatchObject({ ok: false, reason: "signature_error:no_matching_key" });
     });
@@ -169,7 +144,7 @@ describe.skipIf(skipReason !== null)(`live IAP at ${LIVE_URL}`, () => {
 
   describe("the claim shape production actually emits", () => {
     it("puts a bare address in email — no namespace prefix", () => {
-      expect(liveClaims["email"]).toBe(EXPECTED_EMAIL);
+      expect(liveClaims["email"]).toBe(expectedEmail);
       expect(String(liveClaims["email"])).not.toContain(":");
     });
 
@@ -188,47 +163,13 @@ describe.skipIf(skipReason !== null)(`live IAP at ${LIVE_URL}`, () => {
 
     it("still matches the pinned capture, claim for claim", () => {
       // Drift detector against production Google. If this fails, the offline
-      // suites in BOTH languages are modelling a shape that no longer exists
-      // — re-capture and update spec/fixtures/real_wif_iap_payload.json.
+      // suites in ALL FOUR languages are modelling a shape that no longer
+      // exists — re-capture and update spec/fixtures/real_wif_iap_payload.json.
       const pinned = JSON.parse(
-        readFileSync(new URL("spec/fixtures/real_wif_iap_payload.json", repoRoot), "utf8"),
+        readFileSync(new URL("../../spec/fixtures/real_wif_iap_payload.json", import.meta.url), "utf8"),
       ) as { claims: Record<string, unknown> };
 
       expect(Object.keys(liveClaims).sort()).toEqual(Object.keys(pinned.claims).sort());
-    });
-  });
-
-  describe("IAP itself is in front of the app", () => {
-    it("ignores a client-supplied assertion header and challenges anyway", async () => {
-      // The forged header never reaches the backend: IAP strips and replaces
-      // it. Without this, an app could be behind a load balancer that merely
-      // forwards whatever the client sent.
-      const response = await fetch(`${LIVE_URL}?login=true`, {
-        headers: { [HEADER]: assertion },
-        redirect: "manual",
-      });
-
-      expect(response.status).toBe(302);
-      expect(response.headers.get("location")).toContain("auth.cloud.google/authorize");
-    });
-
-    it("hands off to the Okta workforce provider, not Google identity", async () => {
-      const response = await fetch(`${LIVE_URL}?login=true`, { redirect: "manual" });
-
-      expect(response.headers.get("location")).toContain("workforcePools/keepzero-okta-poc");
-    });
-  });
-
-  describe("Google's key endpoint", () => {
-    it("serves the JWK set the verifier expects at the -jwk URL", async () => {
-      const response = await fetch(IAP_JWKS_URL);
-      const body = (await response.json()) as { keys: { kty: string; crv: string }[] };
-
-      expect(response.status).toBe(200);
-      expect(body.keys.length).toBeGreaterThan(0);
-      // ES256 / P-256, which is why the offline fixtures mint EC keys rather
-      // than the RSA a generic JWT fixture would reach for.
-      expect(body.keys.every((k) => k.kty === "EC" && k.crv === "P-256")).toBe(true);
     });
   });
 });
