@@ -5,7 +5,80 @@ the `@cruglobal/cru-iap` npm package, the `cru-iap` Python package, and the
 `github.com/CruGlobal/cru-iap/cruiap` Go package. Entries below are marked `[ruby]`,
 `[ts]`, `[python]`, `[go]`, `[docs]`, or `[all]`.
 
-## [Unreleased]
+## [0.1.0] - 2026-07-27
+
+**First tagged release.** Nothing in this repo was ever tagged before, so `0.1.0`
+contains everything: the initial Ruby extraction from beacon (originally written up as
+0.1.0 and dated 2026-07-24, now the last section here) plus the three sibling
+libraries, CI for all four, the live end-to-end suites, and two primitives.
+
+Consumers should pin `v0.1.0` rather than a branch or a bare default branch. `dgt` and
+`dse-portal` currently pin the `add-python-and-go` branch **by name** and must be
+repinned before it is deleted.
+
+### Added — `[all]` `login_url` / `logout_url`
+
+The two IAP control URLs, in all four languages. Both were README checklist items —
+prose that four apps had to re-read correctly, and three of them re-typed the strings by
+hand instead.
+
+- Bare `/` for sign-in is an **infinite redirect**: IAP sends `/` to the IdP, the IdP
+  sends it back to `/`. The most-reported IAP footgun at Cru.
+- Sign-out without `?gcp-iap-mode=CLEAR_LOGIN_COOKIE` **does not sign anyone out**. The
+  app's session goes away, IAP's federated login cookie does not, and the next request
+  signs the same person straight back in.
+
+Pure string builders, so they compose into whatever wiring an app already has. They
+handle the cases a hand-written template gets wrong: a fragment must stay last (`"/a#b"`
+appended naively puts the param *inside* the fragment, where it never reaches the
+server), the separator depends on an existing query, and both are idempotent. The two
+query literals are Google's, so they are cross-checked across all four languages.
+
+### Added — `[all]` a dev bypass that cannot be enabled in production by accident
+
+Three consumers had grown three incompatible bypasses, and one shipped an incident:
+`AUTH_ENABLED` defaulted to the **insecure** value, so forgetting to set it disabled
+authentication.
+
+**There is no boolean** — that is the design. A flag has a wrong default; an
+identity-carrying variable does not, because "unset" can only mean "no bypass". So the
+opt-in *is* the identity: `CRU_IAP_DEV_BYPASS_EMAIL=you@cru.org`. There is no
+`dev_bypass_enabled=` setter either, because anything an app can set in a config file it
+can set in production config.
+
+Two guards on top, independent so neither depends on the app being written correctly:
+`IAP_AUDIENCE` being set (cru-terraform injects it into every IAP-fronted container),
+and the presence of any cloud-runtime marker (`K_SERVICE`, `K_REVISION`, `GAE_ENV`,
+`FUNCTION_TARGET` — set by the platform, so nobody has to remember to). A deploy that
+somehow lost `IAP_AUDIENCE` is still refused on Cloud Run.
+
+Adds **`dev_bypass`** to `REASONS` in all four languages, so a bypassed request lands in
+the same Datadog queries as a real one rather than being invisible. Additive: consumers
+use `is_known_reason` as a predicate, not an enumeration.
+
+### Added — `[all]` live end-to-end verification in every language
+
+Previously only TypeScript verified a real Google-minted assertion, so the claim-shape
+drift detector protected four languages but *ran* in one.
+
+The browser login is the expensive, fragile part and is entirely language-agnostic, so
+it now runs **once** and all four suites verify that one assertion (`e2e/run_all.sh`).
+Twelve checks each: the assertion is genuinely live, it verifies against Google's real
+JWKS, the pass is not vacuous (the same token with exactly one thing broken — edited
+payload, wrong backend service, no audience, re-signed with our own key), and the claim
+shape still matches the pinned capture. Each suite is gated idiomatically so none run by
+accident, and `run_all.sh` refuses to proceed on an unusable capture rather than letting
+four skipped suites report four passes.
+
+### Added — `[all]` CI for all four languages
+
+Python and Go had no CI at all — not even unit. Both now run on a floor-plus-current
+matrix, and Go additionally asserts `go mod tidy` is a no-op, since a dependency
+appearing in a stdlib-only package is a real regression.
+
+Plus a secret-free smoke job on every PR checking that Google's IAP key endpoint still
+serves ES256/P-256 — the one external contract all four libraries share, where a change
+breaks every one of them at once and no offline suite notices.
 
 ### Added — `[ts]` a TypeScript sibling of the gem
 
@@ -199,12 +272,12 @@ echoserver) and beacon-stage's Datadog logs on both sides of the cru-terraform
   entire string. Found when removing the unwrapping regex above, which had been
   masking it. Values containing `/` or `\` are now rejected as `malformed_subject`.
 
-## [0.1.0] - 2026-07-24
+### Added — `[ruby]` the initial extraction from beacon (2026-07-24)
 
-Initial extraction from beacon, following its IAP + Workforce Identity Federation
-cutover and ahead of the same cutover in cru-bot.
+Written up as 0.1.0 at the time but never tagged, so it is folded into this release
+rather than being a version of its own. Followed beacon's IAP + Workforce Identity
+Federation cutover, and preceded the same cutover in cru-bot.
 
-### Added
 - `CruIap::TokenVerifier` — verifies the IAP assertion JWT and extracts an email
   identity. Handles both IAP identity shapes: a plain `email` claim (plain IAP, where
   `sub` is a useless numeric id), and the WIF workforce principal URI in `sub` (all a
@@ -219,7 +292,7 @@ cutover and ahead of the same cutover in cru-bot.
   complete by a spec so it can't drift.
 - `CruIap.logger` — null by default.
 
-### Changed from the beacon originals
+#### Changed from the beacon originals
 - No Rails/ActiveSupport dependency; `googleauth` only, so it works in a plain Rack
   app.
 - `audience:` is a keyword argument defaulting to `ENV["IAP_AUDIENCE"]`, rather than
@@ -229,5 +302,4 @@ cutover and ahead of the same cutover in cru-bot.
 Behavior is otherwise identical to `Beacon::IapTokenVerifier`; all of beacon's specs
 were ported and pass unchanged in substance.
 
-[Unreleased]: https://github.com/CruGlobal/cru-iap/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/CruGlobal/cru-iap/releases/tag/v0.1.0
