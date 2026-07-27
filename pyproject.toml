@@ -32,7 +32,15 @@ packages = ["cru_iap"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Offline by default, like the Ruby and TypeScript suites: nothing in tests/
-# touches the network. `-p no:randomly` is not needed — order independence is
-# not assumed anywhere, but the JWKS cache is reset per-test regardless.
-addopts = "-q"
+# Offline by default, like the Ruby and TypeScript suites: nothing in the
+# default selection touches the network. `-p no:randomly` is not needed — order
+# independence is not assumed anywhere, but the JWKS cache is reset per-test
+# regardless.
+#
+# tests/e2e is deselected here rather than excluded from testpaths, so that
+# `pytest -m e2e` finds it with no extra path argument and a collection error
+# in it still surfaces on a normal run.
+addopts = "-q -m 'not e2e'"
+markers = [
+  "e2e: needs a live capture artifact and network egress; run with `-m e2e` (see e2e/README.md)",
+]
