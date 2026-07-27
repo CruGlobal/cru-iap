@@ -5,6 +5,11 @@ Gemfile.lock
 .idea/
 .DS_Store
 
+# Local credentials (e.g. an Okta admin API token for e2e teardown). Never commit.
+.env
+.env.*
+!.env.example
+
 # E2E: never commit terraform state, plans, or provider binaries
 **/.terraform/
 *.tfstate
