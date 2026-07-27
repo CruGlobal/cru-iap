@@ -5,9 +5,11 @@
  *
  * Entries ending in ":" carry a variable suffix.
  *
- * If you add one here, add it to lib/cru_iap/token_verifier.rb too. A test in
- * each language asserts its own verifier can only emit listed reasons; nothing
- * mechanically enforces that the two lists match, so keep them in step by hand.
+ * If you add one here, add it to the Ruby, Python and Go lists too — in the
+ * same ORDER, since the cross-language tests compare them element by element
+ * (tests/test_package.py checks Ruby and TypeScript against Python;
+ * cruiap/vocabulary_test.go checks all three against Go). A test in each
+ * language additionally asserts its own verifier can only emit listed reasons.
  */
 export const REASONS = [
   "missing_token", //           header absent/blank
@@ -22,7 +24,8 @@ export const REASONS = [
   "issuer_mismatch",
   "verification_error:", //     + the jose error name
   "unexpected_error", //        fail-closed catch-all
-  "iap_jwt", //                 the only ok === true reason
+  "iap_jwt", //                 ok === true — a verified IAP assertion
+  "dev_bypass", //              ok === true — devBypass(), never in production
 ] as const;
 
 export type Reason = (typeof REASONS)[number];

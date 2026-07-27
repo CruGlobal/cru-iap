@@ -29,6 +29,13 @@ def test_exports_the_public_surface():
         "IAP_ISSUER",
         "IAP_JWKS_URL",
         "reset_jwks_cache",
+        "login_url",
+        "logout_url",
+        "LOGIN_QUERY",
+        "LOGOUT_QUERY",
+        "dev_bypass",
+        "DEV_BYPASS_EMAIL_VAR",
+        "CLOUD_MARKERS",
     ):
         assert hasattr(cru_iap, name), f"cru_iap.{name} is not exported"
 

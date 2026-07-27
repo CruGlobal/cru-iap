@@ -28,12 +28,20 @@ describe("the published package", () => {
     const api = (await import(entry)) as Record<string, unknown>;
 
     expect(Object.keys(api).sort()).toEqual([
+      "CLOUD_MARKERS",
+      "DEV_BYPASS_EMAIL_VAR",
+      "DEV_BYPASS_NAME_VAR",
       "HEADER",
       "IAP_ISSUER",
       "IAP_JWKS_URL",
+      "LOGIN_QUERY",
+      "LOGOUT_QUERY",
       "REASONS",
       "assertionFrom",
+      "devBypass",
       "isKnownReason",
+      "loginUrl",
+      "logoutUrl",
       "resetJwksCache",
       "verify",
       "verifyRequest",
