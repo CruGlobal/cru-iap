@@ -1,8 +1,9 @@
 # Changelog
 
-This repo now ships **two** libraries from one source of truth: the `cru_iap` Ruby gem
-and the `@cruglobal/cru-iap` npm package. Entries below are marked `[ruby]`, `[ts]`, or
-`[both]`.
+This repo now ships **four** libraries from one source of truth: the `cru_iap` Ruby gem,
+the `@cruglobal/cru-iap` npm package, the `cru-iap` Python package, and the
+`github.com/CruGlobal/cru-iap/cruiap` Go package. Entries below are marked `[ruby]`,
+`[ts]`, `[python]`, `[go]`, `[docs]`, or `[all]`.
 
 ## [Unreleased]
 
@@ -47,6 +48,50 @@ rather than a 401, the 302 still carries IAP's default HTML body, it covers the 
 path only, and Google documents it as a paid-subscription feature though it applied
 without one here. Plus: IAP IAM changes take **well over five minutes** to propagate,
 which cost one false "the denial path doesn't work" reading.
+
+### Added — `[go]` a Go sibling, for wormhole
+
+`github.com/CruGlobal/cru-iap/cruiap`, for wormhole's dashboard. Same rejection
+vocabulary, same claim-shape decisions, same pinned real-capture fixture.
+
+- `Verify(ctx, assertion, opts…)` and `VerifyRequest(ctx, *http.Request, opts…)`, with
+  `WithAudience`, `WithKeySource`, `WithLogger`, `WithClockTolerance`, `WithClock`.
+- `AssertionFrom`, `AssertionFromHeader`, `Header`, `Reasons`, `IsKnownReason`, `Result`,
+  `IAPIssuer`, `IAPJWKSURL`, `ParseJWKS`, `NewRemoteKeySource`, `ErrUnknownKid`.
+- Neither function returns an error nor panics — every path returns a `Result`, with a
+  `recover` backstop mapping an unanticipated panic to `unexpected_error`. An
+  authentication check must not become a panic that a recover middleware renders as a
+  500, or that an upstream error path swallows into a pass.
+
+**Stdlib-only**, unlike the other three. wormhole — the only consumer — already contains
+a stdlib-only OIDC verifier (`internal/oidcverify`) making and documenting the same
+choice, so adding a dependency here to replace a dependency-free implementation there
+would be a net loss. ES256 verification is small in Go (base64url and JSON for the
+envelope, `crypto/ecdsa` for the signature; no primitive is implemented here). And the
+reason vocabulary is *better* served without a translation layer: each sibling had to
+reverse-engineer its library's error taxonomy, which is where two of the uglier README
+notes came from — jose reporting a non-200 JWKS as its base error class, `PyJWKClient`
+using one type for two faults separable only by message. Here every condition is raised
+where it is detected.
+
+The tradeoff is that the envelope parsing and claim checks are ours rather than a
+widely-audited library's, so the suite pins what a JWT library would otherwise be trusted
+for: alg confusion across six `alg` values including `none` and a lowercase `es256`, a
+truncated *and* an over-long signature, a public key that is not on the curve (via
+`ecdsa.ParseUncompressedPublicKey`, which validates that — the deprecated
+`elliptic.Unmarshal` would not have), and an `exp` that is absent rather than merely past.
+
+Two Go-specific notes now in the README: JWS ES256 signatures are the fixed-width `r||s`
+form rather than the ASN.1 DER `ecdsa.VerifyASN1` wants (the most common mistake in a
+hand-written JWS verifier, and it fails closed, which is why it can go unnoticed); and
+`bad_iss:` is unreachable in Go by construction, because there is no third-party issuer
+check to double-check. A test records that so the gap reads as a decision.
+
+103 tests, offline, zero dependencies. One of them parses `REASONS` out of the Ruby,
+TypeScript **and** Python sources and asserts all four lists are identical — so combined
+with the Python-side check added below, a reason added in any one language turns at least
+one suite red. Verified by injecting a bogus reason and confirming all three comparisons
+failed.
 
 ### Added — `[python]` a Python sibling, for the FastAPI apps
 

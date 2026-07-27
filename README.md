@@ -16,6 +16,7 @@ gem "cru_iap", github: "CruGlobal/cru-iap"
 ```sh
 npm install github:CruGlobal/cru-iap                    # @cruglobal/cru-iap
 uv add "cru-iap @ git+https://github.com/CruGlobal/cru-iap"
+go get github.com/CruGlobal/cru-iap/cruiap
 ```
 
 (Underscored gem name, hyphenated repo — so `Bundler.require` resolves straight to
@@ -23,18 +24,19 @@ uv add "cru-iap @ git+https://github.com/CruGlobal/cru-iap"
 which is why a git install works without a registry. All install from the bare repo URL,
 which is why each language's manifest sits at the root rather than in a subdirectory.)
 
-| | Ruby | TypeScript | Python |
-|---|---|---|---|
-| Source | `lib/` | `src/` | `cru_iap/` |
-| Tests | `spec/` | `test/` | `tests/` |
-| Runtime dep | `googleauth` | `jose` | `pyjwt[crypto]` |
-| Entry point | `CruIap::TokenVerifier.from_request` | `verifyRequest` | `verify_request` |
-| Shared | `e2e/` (terraform + Okta), `spec/fixtures/real_wif_iap_payload.json` | | |
+| | Ruby | TypeScript | Python | Go |
+|---|---|---|---|---|
+| Source | `lib/` | `src/` | `cru_iap/` | `cruiap/` |
+| Tests | `spec/` | `test/` | `tests/` | `cruiap/*_test.go` |
+| Runtime dep | `googleauth` | `jose` | `pyjwt[crypto]` | **none** (stdlib) |
+| Entry point | `CruIap::TokenVerifier.from_request` | `verifyRequest` | `verify_request` | `VerifyRequest` |
+| Shared | `e2e/` (terraform + Okta), `spec/fixtures/real_wif_iap_payload.json` | | | |
 
 All read the same pinned capture of a real Google assertion, so they cannot quietly
-drift apart about what IAP actually sends — and the Python suite additionally parses the
-Ruby and TypeScript `REASONS` lists and asserts all three match, so the shared Datadog
-vocabulary can't drift either.
+drift apart about what IAP actually sends. The rejection vocabulary is checked
+mechanically too: the Python suite asserts its list matches Ruby's and TypeScript's, and
+the Go suite asserts its own matches all three — so whichever language you add a reason
+in, at least one suite goes red until the others catch up.
 
 Which library a given app needs is not a free choice — it follows from the app. As of
 2026-07: beacon and cru-bot are Rails; bills, cru-web-campaign and pingpong are Next.js;
@@ -315,6 +317,87 @@ inference still holds under IAP, but the enforcement moves — it becomes the
 assignment. Read gotcha 8c before assuming the group is still visible app-side; it
 isn't.
 
+## Usage (Go)
+
+`IAP_AUDIENCE` works exactly as above — same env var, same two shapes, same
+fail-closed-if-unset rule. It is read at *call* time, not package-init time.
+
+```go
+import "github.com/CruGlobal/cru-iap/cruiap"
+
+result := cruiap.VerifyRequest(ctx, request)
+
+if result.OK {
+    user, err := provisionUser(ctx, result.Email, result.Name)
+} else {
+    logger.Warn("IAP auth rejected", "reason", result.Reason)
+    // fail closed — never fall through to a dev stub
+}
+```
+
+`Verify` and `VerifyRequest` **never return an error and never panic** — every path
+returns a `Result`, and a `recover` backstop turns an unanticipated panic into
+`unexpected_error`. That is deliberate: an authentication check must not become a panic
+that a recover middleware renders as a 500, or that some upstream error path swallows
+into a pass. Options are `WithAudience`, `WithKeySource`, `WithLogger`,
+`WithClockTolerance` and `WithClock`.
+
+### This one is stdlib-only, unlike its siblings
+
+The other three lean on their ecosystem's JWT library. This one deliberately does not:
+
+- **wormhole**, the only consumer as of 2026-07, already contains a stdlib-only OIDC
+  verifier (`internal/oidcverify`) that makes and documents the same choice. Adding a
+  dependency here to replace a dependency-free implementation there would be a net loss.
+- **ES256 verification is genuinely small in Go** — base64url and JSON for the envelope,
+  `crypto/ecdsa` for the signature. Nothing here implements a cryptographic primitive.
+- **The reason vocabulary is better served without a translation layer.** Each sibling
+  had to reverse-engineer its library's error taxonomy, and two of the uglier notes in
+  this README exist because of it: jose reporting a non-200 JWKS as its base error class,
+  `PyJWKClient` using one error type for two unrelated faults separable only by message.
+  Here every condition is raised where it is detected, so the mapping is exact.
+
+The tradeoff, stated plainly: the JWS envelope parsing and claim checks are this
+package's own rather than a widely-audited library's. That is why the suite pins the
+failure modes a JWT library would otherwise be trusted for — alg confusion across six
+`alg` values including `none`, a truncated and an over-long signature, a public key that
+is not on the curve, and an `exp` that is absent rather than merely past.
+
+Two Go-specific notes:
+
+- **JWS ES256 signatures are the fixed-width `r||s` form** (RFC 7515 A.3), 32 bytes
+  each — *not* the ASN.1 DER encoding `ecdsa.VerifyASN1` expects and most non-JOSE
+  tooling produces. Getting this wrong fails closed, which is the safe direction, but it
+  is the single most common mistake in a hand-written JWS verifier.
+- **`bad_iss:` is unreachable here, by construction.** The siblings get an issuer check
+  from their JWT library and then re-assert, emitting `bad_iss:` if the library ever
+  stopped checking. There is no library to distrust, so the single check emits
+  `issuer_mismatch`. A test records that, so the gap reads as a decision rather than an
+  oversight.
+
+### Reference wiring (net/http middleware)
+
+```go
+func RequireIAP(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Gate the dev bypass on deploy config, never on the header being absent.
+        if os.Getenv("IAP_AUDIENCE") == "" {
+            next.ServeHTTP(w, r.WithContext(withUser(r.Context(), devStubUser())))
+            return
+        }
+
+        result := cruiap.VerifyRequest(r.Context(), r)
+        if !result.OK {
+            slog.Warn("iap_rejected", "reason", result.Reason, "path", r.URL.Path)
+            http.Error(w, "Unauthorized", http.StatusUnauthorized)
+            return
+        }
+
+        next.ServeHTTP(w, r.WithContext(withEmail(r.Context(), result.Email)))
+    })
+}
+```
+
 ## Deployment checklist
 
 - [ ] `IAP_AUDIENCE` set from the terraform module output
@@ -537,12 +620,13 @@ parses the Ruby and TypeScript lists out of their source and asserts all three a
 identical** — so a reason added in one place and forgotten in another fails there. Add a
 reason in every language at once.
 
-Three mappings are worth knowing because the underlying libraries differ:
+These mappings are worth knowing because the underlying libraries differ:
 
-| condition | Ruby (googleauth) | TypeScript (jose) | Python (PyJWT) |
-|---|---|---|---|
-| token's `kid` not in the JWKS | `signature_error:Token not verified as issued by Google` | `signature_error:no_matching_key` | `signature_error:no_matching_key` |
-| JWKS unreachable / non-200 / unparseable | `verification_error:KeySourceError` | `verification_error:KeySourceError` | `verification_error:KeySourceError` |
+| condition | Ruby (googleauth) | TypeScript (jose) | Python (PyJWT) | Go (stdlib) |
+|---|---|---|---|---|
+| token's `kid` not in the JWKS | `signature_error:Token not verified as issued by Google` | `signature_error:no_matching_key` | `signature_error:no_matching_key` | `signature_error:no_matching_key` |
+| JWKS unreachable / non-200 / unparseable | `verification_error:KeySourceError` | `verification_error:KeySourceError` | `verification_error:KeySourceError` | `verification_error:KeySourceError` |
+| wrong `iss` | `issuer_mismatch`, or `bad_iss:` from the re-assert | same | same | `issuer_mismatch` only — see the Go section |
 
 PyJWT needs the same care as jose here for the same reason: `PyJWKClient` raises the
 plain base `PyJWKClientError` for two unrelated conditions — no matching `kid`, and a
@@ -580,9 +664,15 @@ npm run test:e2e              # LIVE: real Okta sign-in through real IAP
 # Python
 uv sync --group dev
 uv run pytest                 # offline, no credentials
+
+# Go
+go test ./cruiap/             # offline, no credentials, no dependencies
+go vet ./...
 ```
 
 No default suite touches the network. `npm run test:e2e` does — see below.
+
+Counts as of 2026-07-26: Ruby 68, TypeScript 99, Python 82, Go 103.
 
 ### End-to-end against live IAP
 
