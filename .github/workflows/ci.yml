@@ -84,7 +84,11 @@ jobs:
         python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v9
+      # Exact tag, not a floating major: setup-uv publishes moving `vN` refs only
+      # up to v7, while v8 and v9 exist as full tags alone — so `@v9` does not
+      # resolve at all. Pinned to the current release rather than dropping back to
+      # the newest floating major, which is two majors behind.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
 
