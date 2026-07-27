@@ -72,6 +72,51 @@ func TestTheVocabularyMatchesThePythonPackage(t *testing.T) {
 		extractReasons(t, source, `(?s)REASONS: tuple\[str, \.\.\.\] = \((.*?)\n\)`))
 }
 
+// The login/logout triggers are Google's literals, and a typo in any one
+// language is a silent auth failure in that language only — an infinite sign-in
+// loop, or a sign-out that does not sign out. Cheap to pin here, where the
+// sibling sources are already being read.
+func TestTheIAPControlQueriesMatchAcrossLanguages(t *testing.T) {
+	cases := []struct {
+		language string
+		file     string
+		login    string
+		logout   string
+	}{
+		{"Ruby", "../lib/cru_iap/urls.rb", `LOGIN_QUERY = "([^"]+)"`, `LOGOUT_QUERY = "([^"]+)"`},
+		{
+			"TypeScript", "../src/urls.ts",
+			`export const LOGIN_QUERY = "([^"]+)"`, `export const LOGOUT_QUERY = "([^"]+)"`,
+		},
+		{"Python", "../cru_iap/urls.py", `LOGIN_QUERY = "([^"]+)"`, `LOGOUT_QUERY = "([^"]+)"`},
+	}
+
+	for _, test := range cases {
+		t.Run(test.language, func(t *testing.T) {
+			source := readSibling(t, test.file)
+
+			for _, pair := range []struct {
+				what    string
+				pattern string
+				want    string
+			}{
+				{"login", test.login, LoginQuery},
+				{"logout", test.logout, LogoutQuery},
+			} {
+				match := regexp.MustCompile(pair.pattern).FindStringSubmatch(source)
+				if match == nil {
+					t.Fatalf("could not find the %s query in %s with %q",
+						pair.what, test.file, pair.pattern)
+				}
+				if match[1] != pair.want {
+					t.Errorf("%s %s query = %q, Go has %q",
+						test.language, pair.what, match[1], pair.want)
+				}
+			}
+		})
+	}
+}
+
 func TestIsKnownReason(t *testing.T) {
 	t.Run("accepts every listed reason", func(t *testing.T) {
 		for _, reason := range Reasons {
