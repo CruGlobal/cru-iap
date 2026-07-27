@@ -10,7 +10,11 @@ Gemfile.lock
 *.tfstate
 *.tfstate.*
 *.tfplan
-*.auto.tfvars
+
+# E2E: tfvars name real projects, orgs, and principals. Only the .example
+# template, which carries placeholders, is committed.
+*.tfvars
+!*.tfvars.example
 
 # E2E: scratch Okta credentials (client secret, test user password)
 /e2e/okta/secrets.json

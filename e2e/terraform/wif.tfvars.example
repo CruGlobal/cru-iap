@@ -1,0 +1,48 @@
+# Example tfvars for the workforce-federation (WIF) variant of this stack.
+#
+# Copy to a real tfvars file and fill in your own values:
+#
+#   cp wif.tfvars.example wif.tfvars     # wif.tfvars is gitignored
+#   terraform workspace new wif
+#   terraform apply -var-file=wif.tfvars \
+#     -var access_token="$(gcloud auth print-access-token --account=you@example.com)"
+#
+# The project must share an org with the workforce pool — that is a hard IAP
+# constraint, and the usual reason the compute side ends up in a different org
+# (and therefore a different project) from wherever your DNS zone lives.
+
+project_id      = "your-sandbox-project-id"
+project_number  = "000000000000"
+organization_id = "000000000000" # only needed when CREATING a pool, not borrowing
+
+# The DNS zone does not have to live in project_id. Point this at whichever
+# project owns a public managed zone whose delegation actually resolves.
+dns_project      = "project-that-owns-the-dns-zone"
+dns_managed_zone = "your-managed-zone-name"
+subdomain        = "cru-iap-wif"
+
+owner = "your-username" # attribution label, so stray resources are findable
+
+# Borrowing an existing pool creates no org-level resource and needs no org-level
+# IAM. It also means no new IdP app: the existing app's ACS URL already embeds
+# the pool and provider ids. Leave shared_workforce_pool empty to create your own
+# pool instead, which does require iam.workforcePools.create on the org.
+enable_workforce_federation  = true
+shared_workforce_pool        = "locations/global/workforcePools/your-existing-pool"
+shared_workforce_provider_id = "your-saml-provider-id"
+okta_provider_type           = "saml"
+
+# With SAML, google.subject = assertion.subject = the IdP's NameID. If your IdP
+# sets NameID to the user's email, the binding is /subject/<email>.
+iap_members = [
+  "principal://iam.googleapis.com/locations/global/workforcePools/your-existing-pool/subject/you@example.com",
+]
+
+# Phase 2 of the two-phase apply: leave empty on the first apply, then copy the
+# `wif_oauth_client_generated_id` output in here and re-apply. See variables.tf.
+wif_oauth_client_generated_id = ""
+
+# echoserver dumps request headers into the response body, so a signed-in browser
+# sees the real x-goog-iap-jwt-assertion and it can be fed straight into the
+# verifier. Only reachable behind IAP. Remove this line for the hello sample.
+container_image = "gcr.io/google-containers/echoserver:1.10"
