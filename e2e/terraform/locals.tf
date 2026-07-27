@@ -5,11 +5,11 @@ locals {
   # Anything that doesn't (compute LB primitives) repeats this in `description`.
   labels = {
     purpose   = "cru-iap-e2e"
-    owner     = "mattdrees"
+    owner     = var.owner
     temporary = "true"
   }
 
-  description = "cru-iap e2e scratch (owner=mattdrees, temporary=true) — safe to delete"
+  description = "cru-iap e2e scratch (owner=${var.owner}, temporary=true) — safe to delete"
 
   hostname = "${var.subdomain}.${trimsuffix(data.google_dns_managed_zone.this.dns_name, ".")}"
 
