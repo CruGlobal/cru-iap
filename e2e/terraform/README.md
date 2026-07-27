@@ -1,224 +1,138 @@
 # e2e/terraform — real IAP, in a sandbox
 
-Stands up a genuine Google IAP path so `cru_iap` can be exercised against live
+Stands up a genuine Google IAP path so the library can be exercised against live
 infrastructure instead of fixtures:
 
 ```
 client ──▶ global external HTTPS LB ──▶ backend service (IAP enabled) ──▶ serverless NEG ──▶ Cloud Run
                     │                            │
-              Google-managed cert          workforce pool (Okta)  ← optional, currently blocked
+              Google-managed cert          workforce pool (optional)
 ```
 
-Everything lives in **`cru-mattdrees-sandbox-poc`** (project number
-`178891842216`). Nothing here touches a real Cru project.
+This is a **standalone, disposable** stack: it owns its own load balancer, keeps
+state locally, and is meant to live in a throwaway project for as long as you are
+actively testing. Nothing here has defaults pointing at a real project — copy
+`wif.tfvars.example` and supply your own.
 
-## Relationship to cru-terraform
-
-Cru's real IAP apps use the `gcp/cloudrun/app` module from
-`cru-terraform-modules`, with the workforce pool alongside it in `cru-terraform`
-(`applications/beacon/stage/workforce.tf`).
-
-**That module is not reused here — this is copy-and-adapt**, and deliberately so.
-The module cannot run against an existing sandbox project:
-
-| Module assumption | Why it can't hold here |
-|---|---|
-| `project.tf` creates a **new** `google_folder` *and* a **new** `google_project` bound to a billing account | Org-level blast radius; we must stay inside one existing project. There is no input that points the module at a pre-existing project |
-| `data.terraform_remote_state.shared_alb` (S3 `cru-tf-remote-state`) | Splices onto Cru's shared ALB in another project; not reachable or appropriate from a sandbox |
-| The private `crugcp` provider (`crugcp_compute_url_map_host_rule`) | Internal provider that PATCHes the shared URL map |
-| Shared VPC service-project attachment + Cross-Project Service Referencing | Needs IAM on Cru's host project |
-| Datadog / GitHub OIDC / Route53 / Cloud Armor / Artifact Registry wiring | Irrelevant here and each needs its own credentials |
-
-What *was* copied verbatim in shape, so the e2e run tests the real thing:
-
-* `iap.tf` — the backend service with `iap { enabled = true }`, the
-  `google_project_service_identity` for IAP's service agent, the
-  `iap.httpsResourceAccessor` grants, and `google_iap_settings` for workforce
-  federation. Adapted from `gcp/cloudrun/app/iap.tf`.
-* The NEG-references-the-service-**by-name** trick, which breaks the
-  `IAP_AUDIENCE → backend service → NEG → Cloud Run` cycle. Adapted from
-  `gcp/cloudrun/app/compute.tf`.
-* `workforce.tf` — pool, provider, and the two-phase IAM OAuth client apply.
-  Adapted from `cru-terraform applications/beacon/stage/workforce.tf`.
-
-This stack owns a **standalone** load balancer rather than joining a shared one.
-
-## Current state
-
-**One workspace is live: `wif`.** The `default` workspace — the original
-Google-identity stack in Matt's sandbox — was **destroyed 2026-07-25** (20 resources,
-verified: A record gone, `*.run.app` 404, state empty). It was strictly superseded by
-`wif`, which is the same architecture plus real Okta federation, and each LB costs
-~$18/month whether or not anyone uses it.
-
-Everything below under "Google identities" describes that destroyed stack and is kept
-because the verification table is still the reference for what a correct apply looks
-like. `terraform workspace select default && terraform apply` recreates it.
-
-| | `default` (destroyed) | `wif` (live) |
-|---|---|---|
-| Project | `cru-mattdrees-sandbox-poc` (cru.org) | `cru-iap-e2e-lb` (test.cru.org) |
-| URL | <https://cru-iap-e2e.matt-sandbox.ustech.app/> | <https://cru-iap-wif.matt-sandbox.ustech.app/> |
-| IAP mode | Google identities | Workforce federation → Okta SAML |
-| Pool | — | `keepzero-okta-poc` (borrowed) |
-| `IAP_AUDIENCE` | `/projects/178891842216/global/backendServices/3357314301240629663` | `/projects/898330966415/global/backendServices/2605597618877293205` |
-
-`terraform output` is the source of truth; the values here are a convenience copy.
-Applying `wif` needs `-var-file=wif.tfvars` and an access token for a `test.cru.org`
-principal, since ADC is a `cru.org` identity:
-
-```sh
-terraform workspace select wif
-terraform apply -var-file=wif.tfvars \
-  -var access_token="$(gcloud auth print-access-token --account=phillip.drees@test.cru.org)"
-```
-
-### The destroyed Google-identity stack
-
-Verified live after apply (2026-07-25), managed cert `ACTIVE`:
-
-| Check | Result |
-|---|---|
-| `GET https://…/` | `302` → `accounts.google.com/o/oauth2/v2/auth` — IAP, not the app |
-| `GET https://…/?login=true` | `302` → same IdP flow |
-| Same request with a forged `x-goog-iap-jwt-assertion:` header | still `302` — IAP ignores the client-supplied header; the app is never reached |
-| `GET http://…/` | `301` → `https://…` |
-| `GET https://cru-iap-e2e-2uzbhsjb7a-uc.a.run.app/` | `404` from the Google frontend — **no IAP bypass** |
-
-Note the cert takes ~5 min to reach `ACTIVE` and the HTTPS frontend a further
-~1-2 min to start serving; `000`/`SSL_ERROR_SYSCALL` in that window is expected,
-not a misconfiguration.
+No stack is currently deployed. The findings below were measured live before the
+last one was destroyed, and are kept because they are the reason this config
+exists rather than a fresh guess each time.
 
 ## Usage
 
 ```sh
+cp wif.tfvars.example wif.tfvars     # then edit; wif.tfvars is gitignored
 terraform init
-terraform plan
-terraform apply
+terraform apply -var-file=wif.tfvars
 
-terraform output iap_audience   # → export IAP_AUDIENCE=…
+terraform output iap_audience        # → export IAP_AUDIENCE=…
 ```
 
-State is **local** (`terraform.tfstate`, gitignored at the repo root). The
-cru-terraform convention is an S3 backend, but this is a disposable
-single-operator scratch stack — nothing else reads its outputs, and a stale lock
-in the shared bucket would be pure downside.
+State is **local** (`terraform.tfstate`, gitignored) — nothing else reads this
+stack's outputs, so a remote backend would only add a stale-lock failure mode.
 
-Credentials: Application Default Credentials for a principal with Compute /
-Cloud Run / IAP / DNS admin on the sandbox. `gcloud auth application-default
-login` if the token is stale. (Note: the `matt-claude@…` service account in the
-sandbox has **no** compute permissions and cannot apply this stack — it lacks
-`compute.backendServices.create` et al. Use the user ADC.)
+Credentials are ADC for a principal with Compute / Cloud Run / IAP / DNS admin.
+If the compute project and the DNS zone are in different orgs, pass
+`-var access_token=…` for the compute-side identity; the DNS record always uses
+ADC, via the aliased provider in `terraform.tf`. Note that a bare service
+account typically **cannot** apply this — it needs `compute.backendServices.create`
+and friends, so use user ADC.
 
-## What it satisfies from the gem's deployment checklist
+The managed certificate takes ~5 min to reach `ACTIVE` and the HTTPS frontend a
+further ~1–2 min to serve; `000` / `SSL_ERROR_SYSCALL` in that window is expected,
+not a misconfiguration.
 
-* **`IAP_AUDIENCE`** — a terraform output, and also injected into the container
-  as an env var, matching the real module's contract. It is the backend-service
-  *resource path*, not a URL and not a client id.
-* **`--ingress=internal-and-cloud-load-balancing`** — enforced as
-  `ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"` in `cloud_run.tf`. The
-  raw `*.run.app` URL returns a Google-frontend `404` rather than reaching the
-  app, so there is no IAP bypass. Verify with:
+## Verified properties
 
-  ```sh
-  curl -i "$(terraform output -raw cloud_run_uri)"    # → 404 from GFE, never the app
-  ```
-* **`/?login=true` and `/?gcp-iap-mode=CLEAR_LOGIN_COOKIE`** — surfaced as the
-  `login_url` / `logout_url` outputs. These are app-side link targets; there is
-  no friendly sign-in page in this stack (the real module's `friendly_signin`
-  needs a GCS bucket, a backend bucket, and URL-map route rules — out of scope
-  for testing the verifier).
-* **`google.email` attribute mapping** — see `locals.tf`. Present and commented
-  as load-bearing, because its absence is the exact bug this e2e exists to
-  catch.
+Confirmed live against a deployed stack:
 
-## Access-denied page — measured live, it works
+| Check | Result |
+|---|---|
+| `GET https://<host>/` | `302` → IdP flow — IAP, not the app |
+| `GET https://<host>/?login=true` | `302` → same IdP flow |
+| Same request with a forged `x-goog-iap-jwt-assertion:` header | still `302` — IAP ignores the client-supplied header; the app is never reached |
+| `GET http://<host>/` | `301` → `https://` |
+| `GET https://<service>.run.app/` | `404` from the Google frontend — **no IAP bypass** |
 
-**Question:** can IAP redirect somewhere friendly when a user is authenticated but not
-authorized — signed in through Okta fine, but not in the group that grants access?
+That last row is the one worth re-checking after any change:
+
+```sh
+curl -i "$(terraform output -raw cloud_run_uri)"    # → 404 from GFE, never the app
+```
+
+It holds because `cloud_run.tf` sets
+`ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"`. Any other value leaves the
+raw `*.run.app` URL reachable with no IAP in front.
+
+## The audience shape
+
+`IAP_AUDIENCE` is a backend-service **resource path**, not a URL and not a client
+id. It is a terraform output and is also injected into the container as an env
+var, matching the contract the real deployment module uses.
+
+The two IAP topologies have different shapes and they are not interchangeable:
+
+```
+LB-fronted IAP:          /projects/NUMBER/global/backendServices/ID
+IAP directly on Cloud Run: /projects/NUMBER/locations/REGION/services/NAME
+```
+
+## Access-denied page — measured, it works
+
+**Question:** can IAP redirect somewhere friendly when a user is authenticated but
+not authorized — signed in fine, but not in the group that grants access?
 
 **Answer: yes.** `IapSettings.applicationSettings.accessDeniedPageSettings
-.accessDeniedPageUri`, exposed by the terraform provider as
-`application_settings { access_denied_page_settings { … } }` and wired up here behind
-`var.access_denied_page_uri` (default `""` = IAP's built-in page). Proven end to end on
-2026-07-25 in this stack: the scratch user's
-`roles/iap.httpsResourceAccessor` binding was removed, `access_denied_page_uri` was set
-to `https://example.com/cru-iap-denied`, and a real headless Okta sign-in landed on
-example.com rather than IAP's error page. `e2e/okta/probe_denied.mjs` is that probe,
-kept so the result is reproducible rather than a claim in a README.
+.accessDeniedPageUri`, exposed by the provider as
+`application_settings { access_denied_page_settings { … } }` and wired up behind
+`var.access_denied_page_uri` (default `""` = IAP's built-in page). Proven end to
+end: the test user's `roles/iap.httpsResourceAccessor` binding was removed,
+`access_denied_page_uri` was set, and a real headless sign-in landed on the custom
+page rather than IAP's error page. `e2e/okta/probe_denied.mjs` is that probe, kept
+so the result is reproducible rather than a claim in a README.
 
 Six things the test established that the docs do not say:
 
-1. **This is the authorization path only.** An *unauthenticated* request still goes to
-   `auth.cloud.google/authorize`. The custom page is reached only after a successful
-   sign-in that then fails the IAM check — which is exactly the "wrong Okta group"
-   case, since group membership is expressed as a
-   `principalSet://…/workforcePools/<pool>/group/<okta-group>` binding.
-2. **Hardcoded query parameters survive; IAP appends none of its own.** Measured both
-   ways on 2026-07-26. A bare URI comes back bare. A URI set to
-   `https://example.com/cru-iap-denied?app=bills&reason=no_group&v=1` arrives in the
-   `Location` header *verbatim*, query string intact — so static context (which app,
-   who to ask, which group to request) can absolutely be encoded in the URI.
+1. **This is the authorization path only.** An *unauthenticated* request still goes
+   to `auth.cloud.google/authorize`. The custom page is reached only after a
+   successful sign-in that then fails the IAM check — which is exactly the "wrong
+   group" case, since group membership is expressed as a
+   `principalSet://…/workforcePools/<pool>/group/<group>` binding.
+2. **Hardcoded query parameters survive; IAP appends none of its own.** A bare URI
+   comes back bare. A URI with `?app=foo&reason=no_group&v=1` arrives in the
+   `Location` header *verbatim*, query string intact — so static context (which
+   app, who to ask, which group to request) can be encoded in the URI.
 
    What you cannot get is anything **dynamic**. IAP adds no identity, no denial
    reason, and — despite the setting — no troubleshooting link when
-   `generate_troubleshooting_uri = true`. So the custom page can say "you need the
-   Bills group, ask #it-help", but it cannot say "*you*, alice@cru.org, need it". If
-   the page needs the identity it has to establish it itself. Plan around that; it is
-   the real constraint on how useful this is.
-3. **The `Accept` header is ignored.** An `Accept: application/json` request gets the
-   same `302` to a cross-origin URL, not a `401`. For a SPA or an API route behind IAP
-   that means `fetch` follows the redirect and dies on CORS rather than seeing a status
-   it can act on. Worth knowing before pointing this at a page on another origin.
-4. **The `302` still carries IAP's default "Access Denied" HTML as its body.** Clients
-   that follow redirects reach the custom page; clients that don't see the old one.
-5. **IAM propagation is slow — well over 5 minutes.** The first probe, run immediately
-   after removing the binding, sailed straight through to the app. Do not conclude
+   `generate_troubleshooting_uri = true`. So the custom page can say "you need
+   group X, ask #it-help", but it cannot say "*you*, alice@example.com, need it".
+   If the page needs the identity it has to establish it itself. Plan around that;
+   it is the real constraint on how useful this is.
+3. **The `Accept` header is ignored.** An `Accept: application/json` request gets
+   the same `302` to a cross-origin URL, not a `401`. For a SPA or an API route
+   behind IAP that means `fetch` follows the redirect and dies on CORS rather than
+   seeing a status it can act on.
+4. **The `302` still carries IAP's default "Access Denied" HTML as its body.**
+   Clients that follow redirects reach the custom page; clients that don't see the
+   old one.
+5. **IAM propagation is slow — well over 5 minutes.** A probe run immediately after
+   removing the binding sailed straight through to the app. Do not conclude
    "denial isn't working" from an immediate retest; wait, then retest.
-6. **Google documents this as part of a paid enterprise security subscription**
-   (Chrome Enterprise Premium). It nevertheless applied and was honoured in
-   `test.cru.org` with nothing purchased for it. Either the org is entitled or the gate
-   is not enforced on this field — **confirm entitlement before depending on it in
-   production**, since "works in test" is not evidence about billing.
-
-The stack has been restored to its documented state: no `accessDeniedPageSettings`, and
-both principals back in `iap_members`.
+6. **Google documents this as part of a paid enterprise subscription** (Chrome
+   Enterprise Premium). It nevertheless applied and was honoured with nothing
+   purchased for it. Either the org was entitled or the gate is not enforced on
+   this field — **confirm entitlement before depending on it in production**, since
+   "works in test" is not evidence about billing.
 
 ```sh
 # reproduce
-terraform apply -var-file=wif.tfvars -var access_token="$TOK" \
-  -var access_denied_page_uri="https://example.com/cru-iap-denied" \
-  -var 'iap_members=["principal://…/subject/matt.drees@cru.org"]'   # drop the scratch user
-sleep 360                                    # IAM propagation, see (5)
+terraform apply -var-file=wif.tfvars \
+  -var access_denied_page_uri="https://example.com/denied" \
+  -var 'iap_members=[]'          # drop the user whose access you're testing
+sleep 360                        # IAM propagation, see (5)
 node ../okta/probe_denied.mjs
-terraform apply -var-file=wif.tfvars -var access_token="$TOK"       # restore
-```
-
-## Getting a real IAP assertion JWT
-
-The default container (`us-docker.pkg.dev/cloudrun/container/hello`) does not
-echo request headers. To capture a live `x-goog-iap-jwt-assertion` and feed it to
-`CruIap::TokenVerifier`, re-apply with an echo image:
-
-```sh
-terraform apply -var container_image=registry.k8s.io/echoserver:1.10
-```
-
-Then sign in through a browser and read the header out of the response body.
-
-## Labels
-
-Every labelable resource carries `purpose=cru-iap-e2e`, `owner=mattdrees`,
-`temporary=true` via the provider's `default_labels`. Compute LB primitives
-(backend services, URL maps, NEGs, proxies, forwarding rules) do not support
-labels at all — those repeat the same attribution in their `description` field.
-
-Find everything:
-
-```sh
-gcloud asset search-all-resources \
-  --scope=projects/cru-mattdrees-sandbox-poc \
-  --query='labels.purpose=cru-iap-e2e'
+terraform apply -var-file=wif.tfvars    # restore
 ```
 
 ## Which workforce mode
@@ -229,63 +143,123 @@ pool comes from depends on `shared_workforce_pool`:
 | | `shared_workforce_pool = ""` (create) | `shared_workforce_pool` set (borrow) |
 |---|---|---|
 | Plan size | 25 to add | **3 to add** — OAuth client, credential, `google_iap_settings` |
-| Org-level IAM | **required** (`iam.workforcePools.create`) | none needed to render; see caveat |
-| Okta side | the scratch app in `../okta` | the **shared** SAML app, org-managed |
+| Org-level IAM | **required** (`iam.workforcePools.create`) | none |
+| IdP side | the scratch app in `../okta` | that pool's existing app |
 | Cleanup | pool id reserved 30 days after destroy | nothing org-level to clean up |
 
-Borrow mode, against Cru's shared pool:
+Borrowing is the mode to reach for. Workforce pools are org-level resources —
+their parent is an organization, not a project — so creating one needs org-level
+IAM a sandbox identity generally does not have, whereas borrowing needs only
+project-level permission to *reference* a pool by name. Borrowing was measured to
+work end to end with no org-level grant at all, which is the answer that matters
+for consuming apps.
 
-```sh
-terraform apply \
-  -var enable_workforce_federation=true \
-  -var shared_workforce_pool="locations/global/workforcePools/cru-workforce-preview" \
-  -var okta_provider_type=saml
+One hard constraint: **the pool and the project must share an org.** That is
+usually what forces the compute side into whichever org owns the pool, and it is
+why `dns_project` exists separately — the DNS zone does not have to follow.
+
+### The mapping that makes or breaks it
+
+`google.email` in the pool provider's `attribute_mapping` is load-bearing. Without
+it the IAP assertion JWT carries **no email claim anywhere** and `sub` is an opaque
+token, so the verifier rejects it with `missing_email`. Two details in the provider
+config must not be tidied away:
+
+* `additional_scopes = ["email", "profile"]` (OIDC). Google requests only `openid`
+  otherwise, the IdP then omits the `email` claim, `google.email` has nothing to
+  map, and the JWT arrives with no identity.
+* `google.email` itself in the attribute mapping. Same failure if dropped.
+
+`google.subject` maps to the immutable IdP subject rather than the email, so a
+rename upstream can't break `principal://…/subject/…` bindings. Note the
+consequence for `iap_members`: in OIDC mode the binding is
+`/subject/<opaque idp id>`, while in SAML mode — where NameID is typically the
+email — it is `/subject/<email>`.
+
+Switching an already-applied stack into workforce mode **replaces** Google-identity
+sign-in on the live URL. Expect to lose the Google-identity path while testing WIF.
+
+### Two-phase apply for the IAM OAuth client
+
+Google's documented flow, not a Terraform limitation:
+`google_iam_oauth_client.allowed_redirect_uris` has to embed the client id the
+**API generates** (a UUID, not the `oauth_client_id` you choose), which doesn't
+exist until after the first create.
+
+1. Apply with `wif_oauth_client_generated_id = ""` (a placeholder URI is used).
+2. Copy the `wif_oauth_client_generated_id` output into that variable.
+3. Apply again.
+
+## Capturing a real IAP assertion JWT
+
+The default container (`us-docker.pkg.dev/cloudrun/container/hello`) does not echo
+request headers. Set `container_image = "gcr.io/google-containers/echoserver:1.10"`,
+which echoes every request header into the response body. Behind IAP only a
+signed-in user can reach it, which is what makes that safe here.
+
+1. Open `https://<host>/?login=true` in a browser and sign in as a principal that
+   holds `roles/iap.httpsResourceAccessor` — see `iap_members`.
+2. In the echoed output find `x-goog-iap-jwt-assertion`. That is the real thing.
+3. Feed it to the verifier:
+
+   ```sh
+   IAP_AUDIENCE="$(terraform output -raw iap_audience)" \
+     ruby -Ilib -rcru_iap -e 'p CruIap::TokenVerifier.call(ARGV[0])' -- "<paste jwt>"
+   ```
+
+Expect `ok?` true, `reason` `"iap_jwt"`, and `email` your address — provided the
+pool maps `google.email`. Against a pool without that mapping the same command
+returns `missing_email`.
+
+`spec/fixtures/real_wif_iap_payload.json` is a decoded capture from this path, kept
+as ground truth for the claim shapes the offline suite mints synthetically. The
+signature is deliberately not stored.
+
+## Okta hand-off
+
+`locals.tf` reads `../okta/outputs.json` (non-secret app details) and
+`../okta/secrets.json` (client secret, gitignored) if they exist, so the two halves
+of the e2e compose without copy-paste. Explicit `okta_*` variables override the
+files. The pool and provider ids default to whatever `outputs.json` declares — they
+must match, because the IdP app's redirect URI embeds them:
+
+```
+https://auth.cloud.google/signin-callback/locations/global/workforcePools/<pool>/providers/<provider>
 ```
 
-**Caveat, not yet measured:** a successful `plan` only proves Terraform can render a
-pool reference — it does not prove the IAP settings API will *accept* a reference to
-a pool the caller cannot read. `matt.drees@cru.org` has none of
-`iam.workforcePools.{get,create,delete,update}` (measured), so an apply is the test.
-If it 403s, the reference needs pool-level read and borrowing buys nothing over
-creating; if it succeeds, no org IAM is needed for consuming apps at all — which is
-the answer that matters for beacon and cru-bot.
+## Labels
 
-### Borrowing will currently fail to sign anyone in, on purpose
+Every labelable resource carries `purpose=cru-iap-e2e`, `owner=<var.owner>`,
+`temporary=true` via the provider's `default_labels`. Compute LB primitives
+(backend services, URL maps, NEGs, proxies, forwarding rules) do not support labels
+at all — those repeat the same attribution in `description`.
 
-The shared pool's provider is missing `google.email` in its `attribute_mapping`
-(cru-terraform PR #11429 fixes it). Until that merges and applies, a login through
-the shared pool produces an IAP JWT with **no email claim**, and `CruIap::TokenVerifier`
-rejects it with `missing_email` — exactly the failure that cost beacon-stage two
-deploy cycles. That makes borrow mode a faithful end-to-end reproduction of the bug
-today, and the regression test for the fix once #11429 lands.
+Find everything:
 
-Note also that switching an already-applied stack into either workforce mode replaces
-Google-identity sign-in on the live URL. The Google-identity path is what currently
-works, so expect to lose it while testing WIF.
+```sh
+gcloud asset search-all-resources \
+  --scope=projects/YOUR_PROJECT \
+  --query='labels.purpose=cru-iap-e2e'
+```
 
 ## Teardown
 
 ```sh
-cd e2e/terraform
-terraform destroy
+terraform destroy -var-file=wif.tfvars
 ```
 
-That is the whole thing — 20 resources, all in the sandbox project, no manual
-cleanup. Notes:
+That is the whole thing — no manual cleanup. Notes:
 
 * **APIs are not disabled.** Every `google_project_service` sets
-  `disable_on_destroy = false`. The sandbox hosts unrelated POCs and destroy must
-  not rip Compute or Cloud Run out from under them. None of these APIs were
-  enabled *by* this stack anyway — all five were already on.
-* **The DNS zone survives.** `matt-sandbox.ustech.app` is pre-existing and read
-  via a data source; only the `cru-iap-e2e` A record is removed.
-* **Workforce pools soft-delete for 30 days.** If you ever do get the pool
-  created, `terraform destroy` marks it deleted but the id `cru-iap-e2e` stays
-  *reserved* for 30 days. A re-apply with the same id inside that window will
-  fail (or, if you undelete instead, resurrect a pool Terraform doesn't have in
-  state). Change `local.wif_pool_id` in `locals.tf` — and the matching
-  `workforce_pool_id` on the Okta side — if you need to recreate sooner.
-* The Okta app is **not** managed here. Tear it down via `e2e/okta/`.
+  `disable_on_destroy = false`, so a destroy can't rip Compute or Cloud Run out
+  from under unrelated work in a shared sandbox.
+* **The DNS zone survives.** It is pre-existing and read via a data source; only
+  the A record is removed.
+* **Workforce pools soft-delete for 30 days.** If you created rather than borrowed
+  one, `terraform destroy` marks it deleted but the id stays *reserved* for 30 days.
+  A re-apply with the same id inside that window fails. Change `local.wif_pool_id`
+  — and the matching `workforce_pool_id` on the Okta side — to recreate sooner.
+* The IdP app is **not** managed here. Tear it down via `e2e/okta/`.
 
 ## Cost
 
@@ -300,132 +274,10 @@ cleanup. Notes:
 | LB data processing / egress at test volumes | cents |
 | **Total while running** | **~$18–19/mo** |
 
-The LB is the entire bill and it is a fixed cost — it does not go down with
-traffic. Destroy the stack when you are not actively testing.
+The LB is the entire bill and it is fixed — it does not go down with traffic.
+Destroy the stack when you are not actively testing.
 
 Global external ALBs are PREMIUM network tier only; there is no Standard-tier
 variant to downgrade to. A regional external ALB would be marginally cheaper but
 drags in Certificate Manager for managed certs and has a different IAP support
 matrix — not worth it for a stack that should be short-lived.
-
-## Blockers
-
-### 1. Workforce identity pool — org-level IAM (OPEN)
-
-`var.enable_workforce_federation` defaults to `false` because **the pool cannot
-be created with the credentials available.**
-
-Workforce pools are org-level: their parent is `organizations/000000000000`
-(cru.org), not the project. Measured, not assumed:
-
-```
-POST cloudresourcemanager.googleapis.com/v1/organizations/000000000000:testIamPermissions
-  {"permissions": ["iam.workforcePools.create", "iam.workforcePools.get",
-                   "iam.workforcePools.delete", "iam.workforcePools.update",
-                   "iam.workforcePoolProviders.create"]}
-→ {}          # zero of five granted
-```
-
-`iam.workforcePools.list` on the org returns `403 PERMISSION_DENIED`. Matt has
-**no** org-level IAM at all in this identity — not a partial grant.
-
-**Needed from Matt:** one of
-
-* `roles/iam.workforcePoolAdmin` on `organizations/000000000000` for the
-  principal running this stack (narrowest sufficient grant), **or**
-* someone with that role creates pool `cru-iap-e2e` + provider `okta` from this
-  config and Terraform imports them, **or**
-* a decision that live workforce federation is out of scope and the e2e settles
-  for Google-identity IAP (which still exercises the verifier — the JWT is real
-  and signed, it just carries a Google `email` claim rather than an Okta-sourced
-  one).
-
-The Terraform is written and plans cleanly either way:
-
-```sh
-terraform plan -var enable_workforce_federation=true    # 25 to add, renders fine
-```
-
-Note the mode difference: with a workforce pool the `email` claim comes from
-Okta through the `google.email` mapping, and *whether it arrives at all* is the
-open question the gem's README flags as **Unverified**. Google-identity mode
-cannot answer that question. Clearing this blocker is the only way to.
-
-### 2. Domain / DNS — CLEARED
-
-Not a blocker after all. `matt-sandbox.ustech.app` is a public Cloud DNS zone in
-the sandbox project, delegated from `ustech.app` in Route53, and its `NS`
-delegation resolves. Terraform adds an A record there and Google issues a
-managed cert against it. No domain was registered or purchased.
-
-### 3. API enablement — CLEARED
-
-All five required APIs (`compute`, `run`, `iap`, `iam`, `dns`) were **already
-enabled** in the sandbox. None were enabled by this work. They are declared in
-`apis.tf` anyway so the stack is self-contained if pointed at a fresh project.
-
-## Okta hand-off
-
-`locals.tf` reads `../okta/outputs.json` (non-secret app details) and
-`../okta/secrets.json` (client secret, gitignored) if they exist, so the two
-halves of the e2e compose without copy-paste. Explicit `okta_*` variables
-override the files. The pool and provider ids default to whatever
-`outputs.json` declares — they must match, because the Okta app's redirect URI
-embeds them:
-
-```
-https://auth.cloud.google/signin-callback/locations/global/workforcePools/cru-iap-e2e/providers/okta
-```
-
-Two details in the provider config are load-bearing and must not be tidied away:
-
-* `additional_scopes = ["email", "profile"]`. Google requests only `openid`
-  otherwise, Okta's authorization server then omits the `email` claim,
-  `google.email` has nothing to map, and the IAP JWT arrives with no identity.
-* `google.email = assertion.email` in the attribute mapping. Same failure if
-  dropped — this is gotcha 2 in the gem's README, hit live by beacon on
-  2026-07-24.
-
-`google.subject` maps to `assertion.sub` (the immutable Okta id) rather than the
-email, so an Okta rename can't break `principal://…/subject/…` bindings.
-
-### Two-phase apply for the IAM OAuth client
-
-Inherited from cru-terraform, and Google's documented flow rather than a
-Terraform limitation: `google_iam_oauth_client.allowed_redirect_uris` has to
-embed the client id the **API generates** (a UUID, not the `oauth_client_id` you
-choose), which doesn't exist until after the first create.
-
-1. Apply with `wif_oauth_client_generated_id = ""` (a placeholder URI is used).
-2. Copy the `wif_oauth_client_generated_id` output into that variable.
-3. Apply again.
-
-## Capturing a real workforce IAP assertion
-
-The `wif` workspace runs `gcr.io/google-containers/echoserver:1.10`, which echoes
-every request header into the response body. Behind IAP only a signed-in user can
-reach it, so this is safe here and is how the keep-zero POC's reference payload was
-captured.
-
-1. Open https://cru-iap-wif.matt-sandbox.ustech.app/?login=true in a browser.
-   IAP redirects to `auth.cloud.google/authorize` with
-   `provider_name=…/workforcePools/keepzero-okta-poc/providers/okta-preview-saml`,
-   which hands off to Okta (cru.oktapreview.com). Sign in as a principal that holds
-   `roles/iap.httpsResourceAccessor` — `iap_members` in `wif.tfvars`.
-2. In the echoed output find `x-goog-iap-jwt-assertion`. That is the real thing.
-3. Feed it to the verifier:
-
-   ```ruby
-   IAP_AUDIENCE=/projects/898330966415/global/backendServices/2605597618877293205 \
-     ruby -Ilib -rcru_iap -e 'p CruIap::TokenVerifier.call(ARGV[0])' -- "<paste jwt>"
-   ```
-
-   Expect `ok?` true, `reason` `"iap_jwt"`, and `email` your Okta address — because
-   `keepzero-okta-poc` maps `google.email`. Against a pool WITHOUT that mapping the
-   same command returns `missing_email`, which is the whole point of the exercise.
-
-Note the audience shape: LB-fronted IAP uses
-`/projects/NUMBER/global/backendServices/ID`, while IAP directly on Cloud Run uses
-`/projects/NUMBER/locations/REGION/services/NAME`. Don't copy one into the other.
-
-Swap back to the hello sample by removing `container_image` from `wif.tfvars`.
