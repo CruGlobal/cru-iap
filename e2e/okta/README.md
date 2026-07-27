@@ -5,7 +5,11 @@ Cloud **workforce identity pool**. Everything here is throwaway. If you are read
 this and don't know why it exists, it should probably be deleted — see
 [Teardown](#teardown).
 
-Created 2026-07-25.
+Created 2026-07-25. **Torn down 2026-07-27** — every object listed below has been
+deleted, verified by the queries under [Teardown](#teardown). The ids are kept as
+a record of what existed; none of them resolve any more. `secrets.json` and
+`capture.json` are gone too. Recreate from this document if the e2e is ever
+needed again.
 
 ## Org
 
@@ -161,8 +165,10 @@ curl -sS "${auth[@]}" -X DELETE "$ORG/api/v1/policies/$POLICY"
 curl -sS "${auth[@]}" -X POST   "$ORG/api/v1/users/$USER/lifecycle/deactivate"
 curl -sS "${auth[@]}" -X DELETE "$ORG/api/v1/users/$USER"
 
-# 5. local
-rm -rf /path/to/cru-iap/e2e/okta
+# 5. local — only the untracked credential files. Do NOT `rm -rf` this whole
+#    directory: the scripts in it are committed, and the terraform README points
+#    at probe_denied.mjs as the reproducible access-denied probe.
+rm -f secrets.json capture.json
 ```
 
 Verify nothing is left:
@@ -211,16 +217,18 @@ Terraform-managed shared SAML app:
 | Scope | `USER` (direct), not a group |
 
 This app had **zero** user and zero group assignments beforehand (recorded before the
-change), so nothing pre-existing was displaced. It is drift from
-`cru-terraform/google/workforce-identity/okta-saml.tf`, which declares the app but no
-assignments, until someone reconciles it.
+change), so nothing pre-existing was displaced.
 
-**Teardown for this one item** (do it whenever the shared-pool test is finished, even
-if the rest of this scratch setup stays):
+**Removed 2026-07-27**, verified — the app now holds only its intended assignments:
 
 ```
-DELETE /api/v1/apps/0oa2smcngd9xM71eo0h8/users/00u2sr49f3tpmox7b0h8
+DELETE /api/v1/apps/0oa2smcngd9xM71eo0h8/users/00u2sr49f3tpmox7b0h8   # 204
 ```
+
+Note the "zero assignments" line above is a snapshot of 2026-07-25 and is no longer
+true: the shared workforce rollout has since populated the app with real users. That
+is intended and unrelated to this scratch setup — do not read a populated app as
+drift.
 
 Do NOT deactivate or delete app `0oa2smcngd9xM71eo0h8` itself — it is a shared,
 Terraform-managed object and is not ours.
