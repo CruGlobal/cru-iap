@@ -56,12 +56,29 @@ a test enforces in a subprocess so its own imports can't mask a leak.
 
 ## What this gem is *not*
 
-It stops at *"who is this?"*. It does not own your `User` model, your session, your
-controller concern, how you render a rejection, your dev/test bypass, or
-authorization.
+It stops just past *"who is this?"*. It does not own your `User` model, your
+session, your controller concern, how you render a rejection, or authorization.
 
-That boundary is deliberate and evidence-based. Comparing the first two consumers,
-every one of these diverged:
+### Where the line moved (2026-07)
+
+The original line was "only the part that does not vary between apps". At two
+consumers that was right. At seven it was measurably wrong: five decisions had
+been re-derived per app, and two came out broken.
+
+So two things moved *in*, as **primitives** — pure functions with no framework
+coupling — rather than as glue:
+
+| | why it moved |
+|---|---|
+| [`Urls`](#the-two-iap-control-urls) — `login_url` / `logout_url` | Four apps re-typed them. Getting sign-in wrong is an infinite redirect loop; getting sign-out wrong silently re-authenticates the same person. It was a README checklist item, i.e. prose people had to re-read correctly. |
+| [`DevBypass`](#the-dev-bypass) | Three apps, three incompatible shapes, one incident: a bypass whose flag defaulted to the **insecure** value, so forgetting to set it disabled auth. |
+
+Deliberately still out: anything with a session or a rendering opinion. The
+evidence says these genuinely differ — beacon serves two hosts from one process,
+flightdeck is an OAuth provider with its own cookie session, dgt keeps a session
+purely for CSRF. One opinionated concern would fit none of them.
+
+The original two-consumer comparison, which is still the reason for the line: 
 
 | | beacon | cru-bot |
 |---|---|---|
@@ -398,6 +415,126 @@ func RequireIAP(next http.Handler) http.Handler {
 }
 ```
 
+## Primitives
+
+Two pure functions, in all four languages, that every consumer was otherwise
+re-deriving. Neither touches a request, a session, or a framework — so they
+compose into whatever wiring an app already has, in one line.
+
+### The two IAP control URLs
+
+```ruby
+CruIap.login_url                      # => "/?login=true"
+CruIap.login_url("/dashboard?tab=1")  # => "/dashboard?tab=1&login=true"
+CruIap.logout_url("/bye")             # => "/bye?gcp-iap-mode=CLEAR_LOGIN_COOKIE"
+```
+
+```ts
+import { loginUrl, logoutUrl } from "@cruglobal/cru-iap";
+```
+
+```python
+from cru_iap import login_url, logout_url
+```
+
+```go
+cruiap.LoginURL("/dashboard")  // "/dashboard?login=true"
+cruiap.LogoutURL("")           // "/?gcp-iap-mode=CLEAR_LOGIN_COOKIE"
+```
+
+Why not an interpolated string at the call site — every one of these is a real
+mistake someone has made or would:
+
+- **Bare `/` for sign-in loops forever.** IAP sends `/` to the IdP, the IdP sends
+  it back to `/`. The most-reported IAP footgun at Cru.
+- **Sign-out without the cookie-clear mode doesn't sign anyone out.** The app's
+  session goes away, IAP's federated login cookie does not, and the next request
+  signs the same person straight back in.
+- **A fragment must stay last.** `"/a#b"` with `"?login=true"` appended naively
+  gives `"/a#b?login=true"`, where the param is inside the fragment and never
+  reaches the server.
+- The separator depends on whether a query is already there, and both helpers are
+  idempotent.
+
+The two query literals are Google's, and a typo in one language is a silent
+failure in that language only — so they are cross-checked across all four by a
+test (`cruiap/vocabulary_test.go`).
+
+### The dev bypass
+
+```sh
+CRU_IAP_DEV_BYPASS_EMAIL=you@cru.org bin/rails server
+```
+
+Compose it in front of the real verify. One line, no branch:
+
+```ruby
+result = CruIap.dev_bypass || CruIap::TokenVerifier.from_request(request)
+```
+
+```ts
+const result = devBypass() ?? (await verifyRequest(request, { audience }));
+```
+
+```python
+result = dev_bypass() or verify_request(request, audience=audience)
+```
+
+```go
+result, bypassed := cruiap.DevBypass()
+if !bypassed {
+    result = cruiap.VerifyRequest(ctx, r, cruiap.WithAudience(audience))
+}
+```
+
+Putting it first is safe, which is the whole design:
+
+**There is no boolean.** A flag has a wrong default, and `AUTH_ENABLED` defaulting
+to the open value is exactly the incident this replaces. An identity-carrying
+variable has no wrong default — either you name a developer to be, or you don't,
+and *unset can only mean no bypass*. There is also no `dev_bypass_enabled = true`
+setter, because anything an app can set in a config file, an app can set in
+production config.
+
+**Two independent guards**, neither depending on the app being written correctly:
+
+1. `IAP_AUDIENCE` set → refuse. cru-terraform injects it into every IAP-fronted
+   container, so the bypass cannot coexist with the config that means "this is a
+   real IAP environment".
+2. A cloud-runtime marker (`K_SERVICE`, `K_REVISION`, `GAE_ENV`,
+   `FUNCTION_TARGET`) → refuse. The platform sets these; nobody has to remember
+   to, which is what makes them trustworthy.
+
+They are independent on purpose: a deploy that somehow lost `IAP_AUDIENCE` is
+still refused on Cloud Run.
+
+It returns `dev_bypass`, a reason in the [shared vocabulary](#rejection-reasons),
+so a bypassed request is queryable in Datadog rather than invisible. The
+configured address must pass the same shape gate as a real identity — including a
+rejection of namespaced values like `sts.google.com:you@cru.org`, which are a
+copy-paste out of a JWT rather than an address. And it warns on **every**
+activation: a bypass that logs once is a bypass someone forgets is on.
+
+### Host resolution per framework
+
+`StripForwardedHost` exists because **Rails resolves `request.host` from
+`X-Forwarded-Host` before `Host`**. GCLB preserves `Host` and never sets
+`X-Forwarded-Host`, so a present value is always client-forged. Any app keying
+behaviour off `request.host` — "only trust the IAP header on the host IAP fronts",
+host-constrained routes — can otherwise be steered by a header.
+
+It is **not** a universal need. Checked per runtime:
+
+| | prefers `X-Forwarded-Host`? | action |
+|---|---|---|
+| Rails | **yes** (`ActionDispatch::Http::URL#raw_host_with_port`) | `CruIap::StripForwardedHost` at position 0 |
+| Next.js | **yes** — `parseHostHeader` prefers it for the Server Actions CSRF check, and `base-server` sets it with `??=`, so a client value survives (verified in Next 16.2) | strip at the edge, and/or set `serverActions.allowedOrigins` |
+| FastAPI / Starlette | no — host comes from the ASGI scope; uvicorn's proxy handling covers `X-Forwarded-For`/`-Proto`, not Host | none needed |
+| Go `net/http` | no — `r.Host` comes from the request line / `Host` header | none needed |
+
+Identity is never forgeable this way — the assertion is signed — so this protects
+the routing layer, not authentication.
+
 ## Deployment checklist
 
 - [ ] `IAP_AUDIENCE` set from the terraform module output
@@ -410,13 +547,14 @@ func RequireIAP(next http.Handler) http.Handler {
       `load_balancer_strategy = "run.app"`, ingress is `INGRESS_TRAFFIC_ALL` and the
       raw `*.run.app` URL reaches the app with **no IAP in front**.
 - [ ] Regardless of ingress, every route must fail closed on a missing header, and a
-      "no header → dev stub" fallback must be impossible in production. Gate the dev
-      bypass on deploy config (e.g. `IAP_AUDIENCE` being unset), not on the header
-      being absent.
-- [ ] `CruIap::StripForwardedHost` inserted at position 0
-- [ ] Sign-in CTA links **`/?login=true`**, not `/`. Bare `/` loops.
-- [ ] Sign-out redirects to **`/?gcp-iap-mode=CLEAR_LOGIN_COOKIE`** so IAP clears the
-      federated login cookie
+      "no header → dev stub" fallback must be impossible in production. Use
+      [`DevBypass`](#the-dev-bypass) rather than a hand-rolled flag — it has no
+      boolean to get backwards, and refuses in any managed runtime.
+- [ ] `CruIap::StripForwardedHost` inserted at position 0 (Rails), or the equivalent
+      for Next.js — see [host resolution](#host-resolution-per-framework). Go and
+      FastAPI need nothing.
+- [ ] Sign-in CTA built with `login_url` — **not** a hand-written `/`. Bare `/` loops.
+- [ ] Sign-out built with `logout_url`, so IAP clears the federated login cookie
 - [ ] Production logs emitted as JSON with a `severity` field, or Cloud Run drops
       Rails' stdout from the log sink and you'll debug the cutover blind
 - [ ] Every surface that authenticates *itself* is listed in the module's `bypass_paths`,
@@ -612,13 +750,21 @@ is Rails, Node, FastAPI or Go. Entries ending in `:` carry a variable suffix.
 `missing_token` · `missing_audience_config` · `bad_iss:` · `missing_exp` ·
 `missing_email` · `malformed_subject` · `signature_error:` · `audience_mismatch` ·
 `expired_token` · `issuer_mismatch` · `verification_error:` · `unexpected_error` ·
-`iap_jwt` (the only `ok?` reason)
+`iap_jwt` · `dev_bypass`
+
+Two reasons are successes: `iap_jwt` (a verified assertion) and `dev_bypass`
+([the dev bypass](#the-dev-bypass), unreachable in a managed runtime). Everything
+else is a rejection. `dev_bypass` is in the vocabulary precisely so a bypassed
+request shows up in the same Datadog queries as a real one instead of being
+invisible.
 
 A test in each language asserts its verifier can only produce listed reasons, so the
 vocabulary can't drift silently within a language. Across languages, the **Python suite
 parses the Ruby and TypeScript lists out of their source and asserts all three are
-identical** — so a reason added in one place and forgotten in another fails there. Add a
-reason in every language at once.
+identical**, and the **Go suite checks all three against its own** — so a reason added
+in one place and forgotten in another fails there. The comparison is
+element-by-element, so add a reason in every language at once, **in the same
+position**.
 
 These mappings are worth knowing because the underlying libraries differ:
 
