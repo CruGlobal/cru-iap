@@ -566,9 +566,6 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
    explicitly, because relying on `repr()` for a security decision is a coincidence
    rather than a design. A shape gate is only as good as what it is handed.
 
-9. **Load-balancer 302s masquerade as Rails redirects** when you are reading logs
-   during a cutover. Check which layer actually issued them.
-
 8c. **The assertion carries no group membership.** There is no `groups` claim, and
    nothing in the payload from which one can be derived — see
    `spec/fixtures/real_wif_iap_payload.json`, whose entire top-level claim set is
@@ -597,6 +594,9 @@ Notes from beacon's cutover, kept here because they cost real deploy cycles:
    rejects everyone, while one that keeps `claims["groups"]&.include?` or an
    `unless groups.blank?` guard admits everyone. Grep for the group claim by name during
    a cutover rather than trusting the tests to catch it.
+
+9. **Load-balancer 302s masquerade as Rails redirects** when you are reading logs
+   during a cutover. Check which layer actually issued them.
 
 10. **Get logs flowing before you theorize.** Two of the wrong turns above were guesses
    written while Rails stdout was not reaching Datadog at all — the commit claiming a
