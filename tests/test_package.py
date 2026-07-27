@@ -7,6 +7,7 @@ framework import, a reason list that drifted from its sibling.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -83,8 +84,34 @@ def test_the_reason_list_matches_the_typescript_package():
     assert list(cru_iap.REASONS) == ts_reasons
 
 
-def test_iap_jwt_is_the_only_success_reason():
+def test_the_four_declared_versions_agree():
+    # The version is hand-maintained in four files, one per language, and until
+    # this test nothing noticed when they diverged. A consumer's lockfile records
+    # whichever one its ecosystem read, so a mismatch means "cru_iap 0.1.0" in a
+    # Gemfile.lock and "cru-iap 0.2.0" in a uv.lock describe the same tree.
+    #
+    # Go is absent on purpose: Go modules take their version from the git tag,
+    # not from a file, so there is nothing to keep in step there.
+    declared = {
+        "python": cru_iap.__version__,
+        "ruby": re.search(
+            r'VERSION\s*=\s*"([^"]+)"', (ROOT / "lib" / "cru_iap" / "version.rb").read_text()
+        ).group(1),
+        "typescript": json.loads((ROOT / "package.json").read_text())["version"],
+        "pyproject": re.search(
+            r'^version\s*=\s*"([^"]+)"', (ROOT / "pyproject.toml").read_text(), re.M
+        ).group(1),
+    }
+
+    assert len(set(declared.values())) == 1, f"versions have drifted: {declared}"
+
+
+def test_the_two_success_reasons_are_the_expected_ones():
+    # Everything else in the vocabulary is a rejection. dev_bypass is a success
+    # on purpose so a bypassed request lands in the same Datadog queries as a
+    # real one rather than being invisible.
     assert "iap_jwt" in cru_iap.REASONS
+    assert "dev_bypass" in cru_iap.REASONS
 
 
 def test_the_jwks_url_is_the_jwk_endpoint_not_the_pem_one():
