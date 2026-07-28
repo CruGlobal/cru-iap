@@ -167,5 +167,7 @@ Prefer adding a shared check to `smoke.mjs` over duplicating it four times. Keep
 expected pool and provider ids in one place stops them rotting in four test files the day
 the stack moves.
 
-See [`../docs/e2e-durable-stack.md`](../docs/e2e-durable-stack.md) for the plan to move
-this onto CI-owned, on-demand infrastructure.
+Note the current shape of this: it needs a developer to stand up a stack and drive a
+browser. Moving it onto CI-owned, on-demand infrastructure is not done yet, so treat a
+standing stack as a temporary thing you create and destroy rather than shared
+infrastructure to depend on.
