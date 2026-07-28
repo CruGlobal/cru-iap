@@ -12,8 +12,11 @@
 // echoes request headers into the page body, so the assertion IAP injected is
 // visible once we are through.
 //
-//   node capture_assertion.mjs [--headed] [--url https://...]
+//   node capture_assertion.mjs --url https://host/?login=true [--headed]
 //                              [--json [path]] [--audience <resource path>]
+//
+// --url is required (or CRU_IAP_E2E_URL). No host is hardcoded here — take it
+// from `terraform output -raw login_url`.
 //
 // Credentials come from secrets.json (gitignored) and outputs.json.
 //
@@ -29,7 +32,18 @@ import { chromium } from "playwright";
 import { totp, msUntilNextStep } from "./totp.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const read = (f) => JSON.parse(readFileSync(join(here, f), "utf8"));
+const read = (f) => {
+  try {
+    return JSON.parse(readFileSync(join(here, f), "utf8"));
+  } catch (e) {
+    console.error(
+      e.code === "ENOENT"
+        ? `missing e2e/okta/${f} — see e2e/okta/README.md for what to create.`
+        : `cannot parse e2e/okta/${f}: ${e.message}`
+    );
+    process.exit(2);
+  }
+};
 
 const secrets = read("secrets.json");
 const outputs = read("outputs.json");
@@ -37,10 +51,28 @@ const outputs = read("outputs.json");
 const args = process.argv.slice(2);
 const headed = args.includes("--headed");
 const urlArg = args.indexOf("--url");
-const TARGET =
-  urlArg !== -1
-    ? args[urlArg + 1]
-    : "https://cru-iap-wif.matt-sandbox.ustech.app/?login=true";
+const TARGET = urlArg !== -1 ? args[urlArg + 1] : process.env.CRU_IAP_E2E_URL;
+if (!TARGET) {
+  console.error(
+    "no target URL. Pass --url https://host/?login=true, or set CRU_IAP_E2E_URL.\n" +
+      "It is the IAP-fronted host from `terraform output -raw login_url`."
+  );
+  process.exit(2);
+}
+
+// The sign-in loop below waits to land back on the app. That has to be derived
+// from the target rather than hardcoded: with a hardcoded host, pointing --url
+// anywhere else means the exit condition never matches and the loop burns its
+// full 120s timeout before failing as "auth loop timed out", which reads like a
+// broken login rather than a stale constant.
+const TARGET_HOST = new URL(TARGET).host;
+const atTarget = () => {
+  try {
+    return new URL(page.url()).host === TARGET_HOST;
+  } catch {
+    return false; // about:blank and friends
+  }
+};
 
 // --json, --json <path>, or absent.
 const jsonArg = args.indexOf("--json");
@@ -143,7 +175,7 @@ try {
   let lastStep = "";
   let usedCode = null;
   while (Date.now() < deadline) {
-    if (/matt-sandbox\.ustech\.app/.test(page.url())) break;
+    if (atTarget()) break;
 
     if (await safe(() => page.$("text=/Set up security methods/i"))) {
       await fail(
@@ -185,7 +217,7 @@ try {
     await page.waitForTimeout(1500);
   }
 
-  if (!/matt-sandbox\.ustech\.app/.test(page.url())) {
+  if (!atTarget()) {
     await fail(`auth loop timed out; last step handled = ${lastStep || "none"}`);
   }
   await page.waitForLoadState("domcontentloaded");

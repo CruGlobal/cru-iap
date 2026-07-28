@@ -10,7 +10,7 @@
 // land ON the app. This one expects not to, and prints the redirect chain plus
 // what a JSON-shaped request gets, since IAP treats both identically.
 //
-//   node probe_denied.mjs [url]
+//   node probe_denied.mjs <url>          (or CRU_IAP_E2E_URL)
 //
 // Setup and findings: ../terraform/README.md, "Access-denied page".
 // NB IAP IAM changes take well over five minutes to propagate -- an immediate
@@ -23,11 +23,51 @@ import { chromium } from "playwright";
 import { totp, msUntilNextStep } from "./totp.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const read = (f) => JSON.parse(readFileSync(join(here, f), "utf8"));
+const read = (f) => {
+  try {
+    return JSON.parse(readFileSync(join(here, f), "utf8"));
+  } catch (e) {
+    console.error(
+      e.code === "ENOENT"
+        ? `missing e2e/okta/${f} — see e2e/okta/README.md for what to create.`
+        : `cannot parse e2e/okta/${f}: ${e.message}`
+    );
+    process.exit(2);
+  }
+};
 const secrets = read("secrets.json");
 const outputs = read("outputs.json");
-const TARGET = process.argv[2] ?? "https://cru-iap-wif.matt-sandbox.ustech.app/?login=true";
+const TARGET = process.argv[2] ?? process.env.CRU_IAP_E2E_URL;
+if (!TARGET) {
+  console.error(
+    "usage: node probe_denied.mjs <url>   (or set CRU_IAP_E2E_URL)\n" +
+      "The IAP-fronted host, from `terraform output -raw login_url`."
+  );
+  process.exit(2);
+}
 const USERNAME = outputs.test_user_email ?? outputs.test_user?.email;
+
+// The sign-in loop waits until we leave the IdP. Derive the IdP host from
+// outputs.json rather than hardcoding one, so pointing this at a different
+// tenant doesn't silently spin for the full timeout.
+const IDP_HOST = (() => {
+  try {
+    return new URL(outputs.okta_org_url ?? outputs.issuer_uri).host;
+  } catch {
+    return null;
+  }
+})();
+if (!IDP_HOST) {
+  console.error("no okta_org_url / issuer_uri in outputs.json — cannot tell when we've left the IdP");
+  process.exit(2);
+}
+const atIdp = () => {
+  try {
+    return new URL(page.url()).host === IDP_HOST;
+  } catch {
+    return false;
+  }
+};
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
@@ -55,7 +95,7 @@ const CODE = 'input[name="credentials.totp"], input[name="credentials.passcode"]
 const deadline = Date.now() + 120_000;
 let usedCode = null;
 while (Date.now() < deadline) {
-  if (!/oktapreview\.com/.test(page.url())) break;
+  if (!atIdp()) break;
   const pw = await safe(() => page.$('input[type="password"]:visible'));
   const code = await safe(() => page.$(CODE));
   if (pw) { await safe(() => pw.fill(secrets.test_user_password)); await submit(); }

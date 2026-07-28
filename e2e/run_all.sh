@@ -58,7 +58,24 @@ if [[ -z "${CRU_IAP_E2E_AUDIENCE:-}" ]]; then
   fi
 fi
 
+# Same story for the sign-in URL: no host is hardcoded in the capture script, so
+# either the caller supplies one or terraform is asked. The shape check exists for
+# the same reason as the audience one above — "Warning: No outputs found" on stdout
+# would otherwise be handed to the script as a URL.
+if [[ -z "${CRU_IAP_E2E_URL:-}" ]]; then
+  if login_url="$(cd e2e/terraform && terraform output -raw login_url 2>/dev/null)" &&
+    [[ "$login_url" =~ ^https://[a-zA-Z0-9.-]+/ ]]; then
+    export CRU_IAP_E2E_URL="$login_url"
+    echo "login url from terraform: $CRU_IAP_E2E_URL"
+  fi
+fi
+
 if [[ "$capture" == true ]]; then
+  if [[ -z "${CRU_IAP_E2E_URL:-}" ]]; then
+    echo "cannot capture: no CRU_IAP_E2E_URL and no terraform login_url output." >&2
+    echo "Set CRU_IAP_E2E_URL=https://host/?login=true, or run --no-capture." >&2
+    exit 2
+  fi
   echo
   echo "=== capturing a live assertion (headless Okta -> WIF -> IAP; may take ~3 min) ==="
   node e2e/okta/capture_assertion.mjs --json

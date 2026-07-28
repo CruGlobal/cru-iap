@@ -90,10 +90,17 @@ Honoured by all four suites:
 | `CRU_IAP_E2E_CAPTURE` | Path to the capture artifact (default `e2e/okta/capture.json`) |
 | `CRU_IAP_E2E_AUDIENCE` | The `IAP_AUDIENCE` to verify against |
 | `CRU_IAP_E2E_EMAIL` | Expected signed-in address |
+| `CRU_IAP_E2E_URL` | Sign-in URL the capture and probe scripts drive |
 
-No infrastructure values are hardcoded in test code. Audience and expected email resolve
-from the environment or the artifact, and otherwise cause a skip — so moving the stack to
-another project touches no test file.
+**No infrastructure values are hardcoded anywhere here.** Audience, expected email and
+sign-in URL all resolve from the environment, the capture artifact, or
+`terraform output` — and otherwise cause a clean error or a skip. Moving the stack to
+another project touches no code.
+
+`run_all.sh` fills in `CRU_IAP_E2E_AUDIENCE` from `terraform output -raw iap_audience`
+and `CRU_IAP_E2E_URL` from `terraform output -raw login_url` when they are unset,
+validating the shape of each so that Terraform's "no outputs found" warning cannot be
+mistaken for a value.
 
 ## The capture artifact
 
