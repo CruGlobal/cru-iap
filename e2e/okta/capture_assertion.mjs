@@ -71,7 +71,7 @@ if (!USERNAME || !PASSWORD) {
   process.exit(2);
 }
 if (!SECRET_TOTP) {
-  console.error("no totp_shared_secret in secrets.json — run: OTKA_TOKEN=... node enroll_totp.mjs");
+  console.error("no totp_shared_secret in secrets.json — run: OKTA_TOKEN=... node enroll_totp.mjs");
   process.exit(2);
 }
 
@@ -148,7 +148,7 @@ try {
     if (await safe(() => page.$("text=/Set up security methods/i"))) {
       await fail(
         "Okta is demanding MFA *enrollment*, not a challenge — the scratch user has no active " +
-          "factor. Run: OTKA_TOKEN=... node enroll_totp.mjs"
+          "factor. Run: OKTA_TOKEN=... node enroll_totp.mjs"
       );
     }
 

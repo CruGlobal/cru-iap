@@ -10,7 +10,7 @@
 // Writes the shared secret into secrets.json (gitignored). Idempotent-ish: if
 // the user already has an ACTIVE totp factor it does nothing.
 //
-//   OTKA_TOKEN=... node enroll_totp.mjs
+//   OKTA_TOKEN=... node enroll_totp.mjs
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -22,9 +22,9 @@ const sp = join(here, "secrets.json");
 const outputs = JSON.parse(readFileSync(join(here, "outputs.json"), "utf8"));
 const secrets = JSON.parse(readFileSync(sp, "utf8"));
 
-const TOKEN = process.env.OTKA_TOKEN;
+const TOKEN = process.env.OKTA_TOKEN;
 if (!TOKEN) {
-  console.error("OTKA_TOKEN not set (note the spelling — it is misspelled in .env)");
+  console.error("OKTA_TOKEN not set — an Okta admin API token with user admin rights");
   process.exit(2);
 }
 const ORG = outputs.okta_org_url.replace(/\/$/, "");
@@ -57,7 +57,7 @@ if (active) {
   console.log(`already enrolled: ${active.id} (${active.status})`);
   if (!secrets.totp_shared_secret) {
     console.error("...but secrets.json has no totp_shared_secret. Reset the factor and re-run:");
-    console.error(`  curl -X DELETE -H "Authorization: SSWS \\$OTKA_TOKEN" ${ORG}/api/v1/users/${USER}/factors/${active.id}`);
+    console.error(`  curl -X DELETE -H "Authorization: SSWS \\$OKTA_TOKEN" ${ORG}/api/v1/users/${USER}/factors/${active.id}`);
     process.exit(1);
   }
   process.exit(0);
