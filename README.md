@@ -48,6 +48,12 @@ coupling: the [two IAP control URLs](#the-two-iap-control-urls) and the
 [dev bypass](#the-dev-bypass). Both are cases where getting it wrong is silent and
 security-relevant, and where every consumer was otherwise re-deriving the same answer.
 
+The one framework-coupled surface is the same case: three Next.js apps hand-rolled the
+same middleware gate, and one of them ordered a header strip wrongly in a way that
+bypassed authentication outright. It lives behind the separate
+[`@cruglobal/cru-iap/next`](#nextjs-middleware--cruglobalcru-iapnext) entry point, so
+`next` stays an optional peer.
+
 There is no Rails or ActiveSupport dependency. The TypeScript package touches no `node:`
 builtin, so it runs on the Edge runtime. The Python package imports no web framework,
 which a test enforces in a subprocess so its own imports cannot mask a leak.
@@ -152,37 +158,69 @@ branch and `null` outside it. `verifyRequest` accepts a Web `Request` or `Header
 or a plain header record. `verify(token)` is the lower-level form. Both take
 `{ audience, logger, jwks, clockToleranceSeconds }`.
 
-### Reference wiring (Next.js middleware)
+### Next.js middleware — `@cruglobal/cru-iap/next`
 
 Middleware is the right seam: one gate for every route, running before any page or route
-handler allocates work for a request that is about to be rejected.
+handler allocates work for a request that is about to be rejected. Three apps wrote that
+gate by hand and got three different answers, so it ships as a factory:
 
 ```ts
-// middleware.ts
-import { NextResponse, type NextRequest } from "next/server";
-import { verifyRequest } from "@cruglobal/cru-iap";
+// middleware.ts (or proxy.ts on Next 16 — the same function serves as either)
+import { createIapProxy } from "@cruglobal/cru-iap/next";
 
+// App-owned, and it has to be: Next requires the matcher to be a statically
+// analyzable literal in this file.
 export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
 
-export async function middleware(request: NextRequest) {
-  // Gate on deploy config, never on the header being absent. "No header →
-  // local stub" is the one fallback that must be impossible in production.
-  if (!process.env.IAP_AUDIENCE) return NextResponse.next();
-
-  const result = await verifyRequest(request);
-  if (!result.ok) {
-    console.warn(JSON.stringify({ message: "iap_rejected", reason: result.reason }));
-    return new NextResponse("Unauthorized", { status: 401 });
-  }
-
-  // Hand the identity downstream rather than verifying again per route. These
-  // are request headers set on the INBOUND request, so they are not
-  // client-controllable — the middleware overwrites whatever arrived.
-  const headers = new Headers(request.headers);
-  headers.set("x-cru-iap-email", result.email);
-  return NextResponse.next({ request: { headers } });
-}
+export default createIapProxy({
+  // Exact-or-prefix match. Note the trailing slash on a directory prefix:
+  // "/api/" leaves /apiary gated, where a bare "/api" would not.
+  publicPrefixes: ["/health", "/api/webhooks/"],
+});
 ```
+
+The gate **fails closed**: no assertion and no `CRU_IAP_DEV_BYPASS_EMAIL` is a 401, in
+every environment. The two shapes that reach for a shortcut here — opening the gate when
+`IAP_AUDIENCE` is unset, and a boolean bypass flag — are exactly the incidents this
+package exists to prevent. Locally you get an identity, never an open gate:
+
+```sh
+CRU_IAP_DEV_BYPASS_EMAIL=you@cru.org npm run dev
+```
+
+Options: `publicPrefixes`, `audience`, `logger`, `env`. A rejection logs one line of
+`{"severity":"WARNING","message":"iap_rejected","reason":…,"path":…}` and answers 401 —
+never a redirect, because IAP owns sign-in and has already run, so bouncing the browser
+only loops.
+
+**Anything in `publicPrefixes` (or excluded by the matcher) must ALSO be in the
+module's `iap.bypass_paths`.** Otherwise the load balancer 401s the request before your
+app ever runs, and the exemption is invisible. See
+[bypass_paths](#surfaces-that-authenticate-themselves-need-bypass_paths).
+
+### The identity headers
+
+The gate stamps the verified identity onto the request it forwards, so downstream code
+reads it instead of re-verifying per route:
+
+| Header | |
+| --- | --- |
+| `x-cru-iap-email` | the identity; always present |
+| `x-cru-iap-name` | display name; absent when the assertion carries no `name` claim |
+| `x-cru-iap-issued-at` | the assertion's `iat`, decimal; absent under the dev bypass |
+
+```ts
+import { identityFrom } from "@cruglobal/cru-iap";
+
+const identity = identityFrom(await headers()); // { email, name, issuedAt } | null
+```
+
+What makes these trustworthy is not the names: it is that the gate **strips all three
+before anything else**, including before the public-path check. Strip after that early
+return and every exempt path becomes an injection point —
+`curl -H 'x-cru-iap-email: admin@cru.org' /health` — for every reader downstream. If you
+hand-roll a gate, use `stripIdentity` / `stampIdentity` in that order; `IDENTITY_HEADERS`
+holds the wire names.
 
 Two Next.js-specific notes:
 

@@ -5,6 +5,55 @@ the `@cruglobal/cru-iap` npm package, the `cru-iap` Python package, and the
 `github.com/CruGlobal/cru-iap/cruiap` Go package. Entries below are marked `[ruby]`,
 `[ts]`, `[python]`, `[go]`, `[docs]`, or `[all]`.
 
+## [0.2.0] - 2026-08-03
+
+Ruby, Python and Go are unchanged in this release; their versions move only to stay in
+step with the npm package, which a test enforces.
+
+### Added — `[ts]` `@cruglobal/cru-iap/next` — the Next.js gate, as a factory
+
+Three Next.js apps hand-rolled the same IAP middleware — bills, cru-web-campaign,
+pingpong (per-route, no gate at all yet) — and the diffs between them were not stylistic:
+
+- bills strips the inbound identity headers **before** its public-path early return.
+  Doing it after is a full authentication bypass: every exempt path becomes an
+  `x-cru-iap-email: admin@cru.org` injection point for everything downstream.
+- cru-web-campaign opened the gate entirely when `IAP_AUDIENCE` was unset, and both apps
+  carried a boolean bypass flag — the same two shapes as the `AUTH_ENABLED` incident
+  below. `createIapProxy` **fails closed**: no assertion and no
+  `CRU_IAP_DEV_BYPASS_EMAIL` is a 401, in every environment.
+
+```ts
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
+export default createIapProxy({ publicPrefixes: ["/health", "/api/webhooks/"] });
+```
+
+The matcher stays app-owned, and has to: Next requires it to be a statically analyzable
+literal in the middleware file, and cru-web-campaign's asset-exemption regex shows the
+intricacy an app legitimately needs there. `publicPrefixes` covers the flat case, with
+bills' exact-or-prefix semantics — which is why a directory prefix is written `"/api/"`,
+so `/apiary` stays gated. Rejections answer 401 rather than redirecting (IAP owns
+sign-in and has already run; bouncing the browser only loops) and log one line of
+`{"severity":"WARNING","message":"iap_rejected","reason":…,"path":…}`.
+
+A separate entry point, so `next` is an **optional** peer (`>=15.3.0`) and the core stays
+importable from Express, route handlers and plain Node. `src/next.ts` is the only module
+in the package that imports `next/server`, which a packaging test pins.
+
+### Added — `[ts]` a standardized identity-header contract
+
+`IDENTITY_HEADERS` / `stampIdentity` / `stripIdentity` / `identityFrom`, framework-free
+and exported from the main entry point. The three names — `x-cru-iap-email`,
+`x-cru-iap-name`, `x-cru-iap-issued-at` — are cru-web-campaign's, already in production,
+so they are frozen rather than configurable.
+
+Verifying once at the edge and stamping the result is what lets downstream code skip
+re-verification. What makes the headers trustworthy is `stripIdentity` running first —
+not the naming — so `stampIdentity` deletes-then-sets name and issued-at rather than
+setting only when present: the real workforce assertion usually has no `name` claim and
+the dev bypass has no payload at all, and in neither case may a client-supplied value
+survive as the identity.
+
 ## [0.1.0] - 2026-07-27
 
 **First tagged release.** Nothing in this repo was ever tagged before, so `0.1.0`
