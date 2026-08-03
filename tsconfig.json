@@ -17,7 +17,15 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "types": ["node"]
+    "types": ["node"],
+    // `next` publishes no "exports" map, so NodeNext cannot see `next/server` —
+    // and neither can plain Node (`import "next/server"` is ERR_MODULE_NOT_FOUND
+    // outside a bundler). It resolves only through Next's own bundler, which is
+    // the only place src/next.ts ever runs. Point tsc straight at the
+    // declarations rather than loosening moduleResolution for the whole package.
+    "paths": {
+      "next/server": ["./node_modules/next/server.d.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
 }

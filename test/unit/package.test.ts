@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -15,6 +15,8 @@ const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8")) as {
   exports: Record<string, Record<string, string>>;
   files: string[];
   dependencies: Record<string, string>;
+  peerDependencies: Record<string, string>;
+  peerDependenciesMeta: Record<string, { optional?: boolean }>;
 };
 
 describe("the published package", () => {
@@ -50,6 +52,25 @@ describe("the published package", () => {
       "verify",
       "verifyRequest",
     ]);
+  });
+
+  it("keeps next out of the main entry point", async () => {
+    // The core has to stay importable from Rails-adjacent Node services, route
+    // handlers and Express, none of which install next. Only the ./next subpath
+    // may reach for it — and it is not imported here for exactly that reason:
+    // `next/server` resolves through Next's bundler only, never bare Node.
+    const leaking = readdirSync(new URL("dist", root))
+      .filter((file) => file.endsWith(".js") && file !== "next.js")
+      .filter((file) => readFileSync(new URL(`dist/${file}`, root), "utf8").includes("next/server"));
+
+    expect(leaking).toEqual([]);
+    expect(existsSync(new URL(pkg.exports["./next"]!["default"]!, root))).toBe(true);
+    expect(existsSync(new URL(pkg.exports["./next"]!["types"]!, root))).toBe(true);
+  });
+
+  it("declares next as an OPTIONAL peer", () => {
+    expect(pkg.peerDependencies["next"]).toBe(">=15.3.0");
+    expect(pkg.peerDependenciesMeta["next"]?.optional).toBe(true);
   });
 
   it("depends only on jose at runtime", () => {
