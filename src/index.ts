@@ -16,6 +16,14 @@ export type { Logger, VerifyOptions, VerifyResult } from "./verifier.js";
 export { LOGIN_QUERY, LOGOUT_QUERY, loginUrl, logoutUrl } from "./urls.js";
 
 export {
+  IDENTITY_HEADERS,
+  identityFrom,
+  stampIdentity,
+  stripIdentity,
+} from "./identity-headers.js";
+export type { Identified, Identity } from "./identity-headers.js";
+
+export {
   CLOUD_MARKERS,
   DEV_BYPASS_EMAIL_VAR,
   DEV_BYPASS_NAME_VAR,

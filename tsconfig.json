@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    // DOM.Iterable because `Headers` really is iterable in every runtime this
+    // package targets; plain "DOM" omits the iterator and makes
+    // `Object.fromEntries(headers)` a type error.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,

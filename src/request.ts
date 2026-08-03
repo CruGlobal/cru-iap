@@ -31,11 +31,21 @@ type HeaderCarrier =
  * too, but a hand-built literal may not).
  */
 export function assertionFrom(source: HeaderSource): string | undefined {
+  return headerFrom(source, HEADER);
+}
+
+/**
+ * Read one named header off any `HeaderSource`. Internal to the package —
+ * identity-headers.ts needs the identical case-insensitive, duplicate-refusing
+ * lookup, and a second copy of it there would drift.
+ *
+ * A repeated header arrives as an array in Node. Neither IAP nor our own gate
+ * produces that shape, so treat it as absent rather than guessing which to
+ * trust — the caller then fails closed.
+ */
+export function headerFrom(source: HeaderSource, name: string): string | undefined {
   const carrier = hasHeaders(source) ? source.headers : source;
-  const raw = readHeader(carrier, HEADER);
-  // A repeated header arrives as an array in Node. Two assertions is not a
-  // shape IAP produces, so treat it as absent rather than guessing which to
-  // trust — the verifier then reports missing_token and fails closed.
+  const raw = readHeader(carrier, name);
   if (Array.isArray(raw)) return raw.length === 1 ? raw[0] : undefined;
   return raw ?? undefined;
 }
