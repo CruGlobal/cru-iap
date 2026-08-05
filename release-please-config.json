@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "node",
+  "packages": {
+    ".": {
+      "package-name": "@cruglobal/cru-iap",
+      "include-component-in-tag": false,
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": false,
+      "draft": false,
+      "prerelease": false,
+      "extra-files": [
+        "lib/cru_iap/version.rb",
+        "cru_iap/__init__.py",
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        }
+      ],
+      "changelog-sections": [
+        { "type": "feat", "section": "Added", "hidden": false },
+        { "type": "fix", "section": "Fixed", "hidden": false },
+        { "type": "perf", "section": "Changed", "hidden": false },
+        { "type": "revert", "section": "Reverted", "hidden": false },
+        { "type": "deps", "section": "Changed", "hidden": false },
+        { "type": "refactor", "section": "Changed", "hidden": false },
+        { "type": "docs", "section": "Changed", "hidden": false },
+        { "type": "build", "section": "Changed", "hidden": true },
+        { "type": "ci", "section": "Changed", "hidden": true },
+        { "type": "e2e", "section": "Changed", "hidden": true },
+        { "type": "test", "section": "Changed", "hidden": true },
+        { "type": "chore", "section": "Changed", "hidden": true },
+        { "type": "style", "section": "Changed", "hidden": true }
+      ]
+    }
+  }
+}
