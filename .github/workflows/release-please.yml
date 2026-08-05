@@ -1,0 +1,83 @@
+name: release-please
+
+# Maintains a standing "chore(main): release X.Y.Z" pull request on main,
+# built from conventional-commit subjects. Merging it bumps every version
+# file, writes CHANGELOG.md, tags `vX.Y.Z`, and publishes a GitHub Release
+# — which is what .github/workflows/release.yml fires on.
+#
+# ── Why the config looks the way it does ────────────────────────────────
+#
+# release-please-config.json cannot carry comments (release-please parses it
+# with a plain JSON.parse), so the reasoning lives here:
+#
+#   include-component-in-tag: false
+#     Tags stay bare `vX.Y.Z`, matching the two hand-cut releases — and
+#     required by Go. `go get github.com/CruGlobal/cru-iap/cruiap` resolves
+#     versions from tags on the root module, so a component prefix would
+#     make the Go package untaggable.
+#
+#   bump-minor-pre-major: true, bump-patch-for-minor-pre-major: false
+#     Pre-1.0: features move the minor, breaking changes are capped at
+#     minor. Matches what this repo did by hand (0.1.0 -> 0.2.0 for the two
+#     new TypeScript surfaces). This deviates from cru-flags-node and
+#     js-hcl2, which also set bump-patch-for-minor-pre-major and so ship
+#     features as patches — deliberate here, because four ecosystems read
+#     this one version and a feature landing as 0.2.1 understates it in
+#     three of their lockfiles.
+#
+#   extra-files
+#     `release-type: node` only knows package.json and package-lock.json.
+#     The other three declared versions have to move in the same commit or
+#     the release PR cannot go green:
+#     tests/test_package.py::test_the_four_declared_versions_agree fails the
+#     build the moment they diverge. Go is absent on purpose — Go modules
+#     take their version from the git tag, which release-please creates.
+#
+#     lib/cru_iap/version.rb and cru_iap/__init__.py use the generic
+#     updater, which rewrites the version on any line carrying an
+#     `x-release-please-version` comment. pyproject.toml uses the
+#     structured TOML updater instead, so no annotation has to sit in a
+#     published manifest. Both are surgical: they rewrite one line and
+#     leave the surrounding comments alone.
+#
+#     Not covered: uv.lock also records `version = "0.2.0"` for the
+#     editable root package. Nothing breaks — the Python CI job runs with
+#     `--frozen`, which uses the lockfile as-is rather than checking it, and
+#     `uv build` reads the version from pyproject.toml. The next `uv lock`
+#     resyncs it. There is no updater that could do it safely: uv.lock is
+#     fully regenerated on every lock, so an annotation comment would not
+#     survive.
+#
+#   docs is NOT hidden
+#     Unlike the other Cru release-please configs. CHANGELOG.md advertises
+#     `[docs]` entries, and documentation is the largest commit category
+#     here — the claim-shape writeups in README.md are a deliverable, and
+#     they ship inside the gem, the npm tarball and the wheel. `e2e` (this
+#     repo's own type, for the Terraform/Okta harness) is hidden: it
+#     changes nothing a consumer installs.
+
+on:
+  push:
+    branches: [main]
+  # Allow manual invocation from the Actions tab for first-run bootstrap
+  # or after config changes.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # CRU_DEVOPS_GITHUB_TOKEN rather than GITHUB_TOKEN: pull requests
+      # opened by the default token do not trigger workflows, so CI would
+      # never run on the release PR. It is a CruGlobal org secret visible
+      # to all repositories — nothing to configure here.
+      - name: Run release-please
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.CRU_DEVOPS_GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

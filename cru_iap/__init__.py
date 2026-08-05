@@ -62,4 +62,7 @@ __all__ = [
     "verify_request",
 ]
 
-__version__ = "0.2.0"
+# Bumped by release-please, in lockstep with package.json, pyproject.toml and
+# lib/cru_iap/version.rb — see release-please-config.json's extra-files. The
+# annotation is what makes this line findable; don't drop it.
+__version__ = "0.2.0"  # x-release-please-version

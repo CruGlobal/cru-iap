@@ -85,10 +85,17 @@ def test_the_reason_list_matches_the_typescript_package():
 
 
 def test_the_four_declared_versions_agree():
-    # The version is hand-maintained in four files, one per language, and until
-    # this test nothing noticed when they diverged. A consumer's lockfile records
-    # whichever one its ecosystem read, so a mismatch means "cru_iap 0.1.0" in a
-    # Gemfile.lock and "cru-iap 0.2.0" in a uv.lock describe the same tree.
+    # The version lives in four files, one per language. A consumer's lockfile
+    # records whichever one its ecosystem read, so a mismatch means "cru_iap
+    # 0.1.0" in a Gemfile.lock and "cru-iap 0.2.0" in a uv.lock describe the
+    # same tree.
+    #
+    # release-please moves all four in one commit (see
+    # release-please-config.json's extra-files), so this now doubles as the
+    # guard on that config: if this fails on a "chore(main): release X.Y.Z"
+    # pull request, an extra-file stopped matching — most likely because an
+    # `x-release-please-version` annotation was dropped from version.rb or
+    # __init__.py, or because pyproject.toml's `[project] version` moved.
     #
     # Go is absent on purpose: Go modules take their version from the git tag,
     # not from a file, so there is nothing to keep in step there.

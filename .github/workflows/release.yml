@@ -1,0 +1,124 @@
+name: release
+
+# Fires when a GitHub Release is published. release-please (on main) is the
+# intended source: when its release PR is merged, release-please creates a
+# matching GitHub Release and this workflow picks it up. Manual releases
+# created through the UI / gh CLI work too, and workflow_dispatch is
+# available for retrying a failed publish.
+#
+# Two of the four libraries publish to a registry from here. The gem and the
+# Go package do not: Go has no registry (the tag release-please pushes IS
+# the release), and the gem is still installed from git. Both jobs are
+# independent, so a PyPI misconfiguration cannot block the npm publish or
+# vice versa.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One release workflow at a time. Registry uploads are single-writer and a
+# version can only be uploaded once; serialize to avoid races.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to mint the OIDC token npm trusted publishing exchanges for
+      # a short-lived credential, and for `--provenance`. Without it, publish
+      # fails at upload time.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # 24 rather than the 20 floor the package declares: trusted publishing
+      # needs npm >= 11.5.1, which only ships with Node 24. The floor is
+      # still proven on every PR by the CI matrix.
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      # `npm ci` runs `prepare`, which builds dist/ — so the packaging tests
+      # below have something to assert against.
+      - name: Install dependencies
+        run: npm ci
+
+      # Sanity: re-run the checks against the exact commit being published.
+      # release-please's PR was already green before merge, but releases can
+      # also be cut manually, and the seconds this costs buy protection
+      # against that.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # No NODE_AUTH_TOKEN: this repo publishes via npm trusted publishing
+      # (OIDC), attached to the package after the initial bootstrap publish.
+      # If this step fails with ENEEDAUTH, the trusted publisher has not
+      # been configured on npmjs.com yet.
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    # The `pypi` environment is half of the Trusted Publishing identity
+    # (repository + workflow + environment). PyPI rejects an OIDC token
+    # minted outside it.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cru-iap/
+    permissions:
+      contents: read
+      # Required to mint the OIDC token PyPI Trusted Publishing exchanges
+      # for a short-lived upload credential. There is no PyPI API token in
+      # this repository.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Exact tag, not a floating major: setup-uv publishes moving `vN` refs
+      # only up to v7, while v8 and v9 exist as full tags alone — so `@v9`
+      # does not resolve at all. Same pin as ci.yml.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      # Same sanity check as the npm job, and the same `--frozen` as CI so a
+      # stale uv.lock fails rather than being silently re-resolved.
+      - name: Unit tests
+        run: uv run --frozen pytest
+
+      # --out-dir, not the default dist/: `npm run build` also writes dist/,
+      # and pointing gh-action-pypi-publish at a directory that a sibling
+      # toolchain writes into is how a stray .js file ends up in a wheel
+      # upload. Nothing in this job builds TypeScript, but the collision is
+      # one `npm ci` away from being real.
+      - name: Build sdist and wheel
+        run: uv build --out-dir dist-python
+
+      # Uploads via the OIDC token above. On the very first release this
+      # succeeds through PyPI's *pending publisher* flow, which creates the
+      # `cru-iap` project — no manual upload is needed to claim the name.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist-python
