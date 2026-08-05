@@ -1,0 +1,131 @@
+version: 2
+
+# Policy, mirrored from cru-flags-node / cru-flags-python: minor and patch
+# bumps are grouped into one weekly PR per ecosystem to keep review cost
+# flat, and major bumps are left ungrouped so each gets its own PR and a
+# proper migration check. See .github/workflows/dependabot-auto-merge.yml
+# for which of these merge without a human.
+#
+# Unlike the cru-flags clients, this repo does ship runtime dependencies
+# (jose, pyjwt[crypto], googleauth, the Go module requirements), so a
+# grouped PR here can move library-consumer-facing code, not just tooling.
+
+updates:
+  # ──────────────────────────────────────────────────────────────────────────
+  # npm — the TypeScript binding at the repo root. `jose` is a runtime dep
+  # and `next` is a peer dep; the rest is tooling.
+  # ──────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # npm — the Okta e2e harness, which carries its own lockfile and only
+  # needs Playwright kept current.
+  # ──────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/e2e/okta"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      e2e-npm-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Python — pyproject.toml's runtime `dependencies` plus the `dev` extra.
+  # ──────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Ruby — the gemspec's runtime deps plus the Gemfile's test-only Rails
+  # pieces (railties/actionpack, deliberately not the `rails` meta-gem).
+  # ──────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "bundler"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      ruby-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Go — go.mod for the Go binding.
+  # ──────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # GitHub Actions used by .github/workflows/**. Same policy: one batched
+  # PR per week for minor + patch bumps; majors remain per-PR so any
+  # breaking change in an action surface surfaces distinctly.
+  # ──────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
