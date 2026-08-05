@@ -10,6 +10,13 @@ on, release-please generates entries from conventional-commit scopes and renders
 distinction as **`ts:`**, **`ruby:`**, and so on. See
 [Releases](https://github.com/CruGlobal/cru-iap#releases) for how a release is cut.
 
+## [0.2.1](https://github.com/CruGlobal/cru-iap/compare/v0.2.0...v0.2.1) (2026-08-05)
+
+
+### Changed
+
+* what makes release-please cut a release, and what silently does not ([#7](https://github.com/CruGlobal/cru-iap/issues/7)) ([cfe1646](https://github.com/CruGlobal/cru-iap/commit/cfe1646b2aea1c0c895168290226bc58a48a4578))
+
 ## [0.2.0] - 2026-08-03
 
 Ruby, Python and Go are unchanged in this release; their versions move only to stay in
