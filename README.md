@@ -747,6 +747,28 @@ and `CHANGELOG.md` are both editable in place, and the prose is the point of tha
 Pre-1.0, features move the minor and breaking changes are capped at minor. The gem is not
 pushed to RubyGems; its version moves only to stay in step.
 
+#### The PR title is the commit, and it decides whether a release happens at all
+
+`main` takes squash merges only, and the squash commit's subject is the **PR title** — so
+that title is the conventional commit release-please reads. Individual commits on the
+branch are collapsed and never seen.
+
+Two consequences, and the second one is a trap:
+
+1. Write the PR title as the conventional commit you want in the changelog. A tidy branch
+   history does not help.
+2. **If the title's type is hidden, no release is cut — not even an empty one.**
+   release-please renders the changelog first and skips the release entirely when it comes
+   back empty (`No user facing commits found ... - skipping`). The hidden types are
+   `build`, `ci`, `chore`, `e2e`, `style` and `test`; the visible ones are `feat`, `fix`,
+   `perf`, `revert`, `deps`, `refactor` and `docs`.
+
+So a PR titled `ci: …` or `chore: …` lands on `main` and produces nothing, silently. That
+is usually right — neither changes anything a consumer installs. When such a change *does*
+need to ship, either title it for what it delivers to consumers, or follow it with a
+visible-type commit. Dependabot's default `chore(deps):` prefix is hidden for this same
+reason; a dependency bump that matters to consumers needs a `deps:` title.
+
 ## License
 
 MIT. See [LICENSE.txt](LICENSE.txt).
