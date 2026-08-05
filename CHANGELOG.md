@@ -2,8 +2,13 @@
 
 This repo now ships **four** libraries from one source of truth: the `cru_iap` Ruby gem,
 the `@cruglobal/cru-iap` npm package, the `cru-iap` Python package, and the
-`github.com/CruGlobal/cru-iap/cruiap` Go package. Entries below are marked `[ruby]`,
-`[ts]`, `[python]`, `[go]`, `[docs]`, or `[all]`.
+`github.com/CruGlobal/cru-iap/cruiap` Go package. All four share one version and one tag.
+
+Which library an entry applies to is called out per entry. The two hand-written releases
+below use `[ruby]` / `[ts]` / `[python]` / `[go]` / `[docs]` / `[all]` markers; from 0.3.0
+on, release-please generates entries from conventional-commit scopes and renders the same
+distinction as **`ts:`**, **`ruby:`**, and so on. See
+[Releases](https://github.com/CruGlobal/cru-iap#releases) for how a release is cut.
 
 ## [0.2.0] - 2026-08-03
 

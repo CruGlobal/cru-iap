@@ -15,8 +15,8 @@ learn that maintaining four divergent copies of it would be a mistake.
 gem "cru_iap", github: "CruGlobal/cru-iap"
 ```
 ```sh
-npm install github:CruGlobal/cru-iap                    # @cruglobal/cru-iap
-uv add "cru-iap @ git+https://github.com/CruGlobal/cru-iap"
+npm install @cruglobal/cru-iap
+uv add cru-iap
 go get github.com/CruGlobal/cru-iap/cruiap
 ```
 
@@ -27,11 +27,20 @@ go get github.com/CruGlobal/cru-iap/cruiap
 | Runtime dependency | `googleauth` | `jose` | `pyjwt[crypto]` | **none** (stdlib) |
 | Entry point | `CruIap::TokenVerifier.from_request` | `verifyRequest` | `verify_request` | `VerifyRequest` |
 
-Each language's manifest sits at the repository root so every ecosystem can install
-from the bare repository URL. The gem name is underscored while the repository is
-hyphenated, so `Bundler.require` resolves straight to `lib/cru_iap.rb`; the npm package
-builds on install via `prepare`, which is what makes a git install work without a
-registry.
+The npm package and the Python package are published to their registries; the gem is
+installed from git and the Go package needs no registry at all, since `go get` resolves
+the version straight from the tag. Every language's manifest sits at the repository root,
+so a bare-repository-URL install still works for all four — which is how you install an
+unreleased commit:
+
+```sh
+npm install github:CruGlobal/cru-iap
+uv add "cru-iap @ git+https://github.com/CruGlobal/cru-iap"
+```
+
+The gem name is underscored while the repository is hyphenated, so `Bundler.require`
+resolves straight to `lib/cru_iap.rb`; the npm package builds on install via `prepare`,
+which is what makes a git install work without a registry.
 
 All four read the same pinned capture of a real Google assertion
 (`spec/fixtures/real_wif_iap_payload.json`), so they cannot quietly drift apart about
@@ -708,6 +717,35 @@ go vet ./...
 
 No default suite touches the network. The end-to-end suites, which verify against real
 Google infrastructure, are gated separately in each language — see [`e2e/`](e2e/).
+
+### Releases
+
+All four libraries share one version and one tag. Releases are cut by
+[release-please](https://github.com/googleapis/release-please), which keeps a standing
+`chore(main): release X.Y.Z` pull request on `main` built from
+[conventional-commit](https://www.conventionalcommits.org/) subjects — this repo scopes
+them by language (`feat(ts):`, `fix(ruby):`, `docs(python):`).
+
+Merging that PR is the whole release:
+
+1. It bumps the version in all four declared places — `package.json` (+
+   `package-lock.json`), `pyproject.toml`, `cru_iap/__init__.py` and
+   `lib/cru_iap/version.rb`. It has to move all four:
+   `tests/test_package.py::test_the_four_declared_versions_agree` fails the build
+   otherwise.
+2. It writes the new `CHANGELOG.md` section above the previous one.
+3. release-please tags `vX.Y.Z` and publishes a GitHub Release. The tag is what `go get`
+   resolves, so Go needs nothing further.
+4. That Release triggers [`release.yml`](.github/workflows/release.yml), which re-runs the
+   checks and publishes `@cruglobal/cru-iap` to npm and `cru-iap` to PyPI. Both use
+   trusted publishing (OIDC) — there is no registry token in this repository.
+
+The generated changelog entry is terse by design. **Edit the release PR before merging**
+when a change deserves the kind of writeup the 0.1.0 and 0.2.0 entries have — the PR body
+and `CHANGELOG.md` are both editable in place, and the prose is the point of that file.
+
+Pre-1.0, features move the minor and breaking changes are capped at minor. The gem is not
+pushed to RubyGems; its version moves only to stay in step.
 
 ## License
 
