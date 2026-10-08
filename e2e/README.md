@@ -1,6 +1,6 @@
 # e2e — verifying against real Google infrastructure
 
-The offline suites in all four languages mint their own tokens, so none of them can
+The offline suites in all five languages mint their own tokens, so none of them can
 answer the question that matters most:
 
 > Does a correctly configured workforce pool emit an `email` claim, and does this
@@ -18,7 +18,7 @@ library's verifier, which fetches Google's live JWKS to check the real signature
 
 | Path | What |
 |---|---|
-| `run_all.sh` | Capture once, verify in all four languages. The normal entry point. |
+| `run_all.sh` | Capture once, verify in all five languages. The normal entry point. |
 | `smoke.mjs` | Secret-free, browser-free checks. |
 | `okta/` | Scratch IdP objects and the Playwright capture driver. |
 | `terraform/` | The IAP stack the capture signs in to. |
@@ -37,16 +37,16 @@ library's verifier, which fetches Google's live JWKS to check the real signature
 ## Quick start
 
 ```sh
-e2e/run_all.sh                 # capture, then Ruby + Python + Go + TypeScript
+e2e/run_all.sh                 # capture, then Ruby + Python + Go + TypeScript + Rust
 e2e/run_all.sh --no-capture    # reuse the existing artifact (it lives ~10 min)
 e2e/run_all.sh --only go,ts    # subset
 e2e/run_all.sh --help
 ```
 
-The browser login runs **once** and all four suites verify that one string. It is the
+The browser login runs **once** and all five suites verify that one string. It is the
 expensive, fragile part — three redirect chains and a TOTP challenge, one to three
-minutes — and it is entirely language-agnostic, so four suites each driving their own
-login would cost four times the wall clock and four independent chances to flake for no
+minutes — and it is entirely language-agnostic, so five suites each driving their own
+login would cost five times the wall clock and five independent chances to flake for no
 additional coverage.
 
 `run_all.sh` resolves the audience from `CRU_IAP_E2E_AUDIENCE` if set, and otherwise
@@ -61,11 +61,12 @@ bundle exec rake e2e
 uv run pytest -m e2e
 go test -tags e2e -count=1 ./cruiap/...
 npm run test:e2e
+cargo test --manifest-path rust/Cargo.toml --features e2e --test live_iap
 ```
 
-None of these run under `rake default`, `uv run pytest`, `go test ./...`, or `npm test`.
-Each is gated idiomatically for its language: a separate rake task, a deselected pytest
-marker, a build tag, and a separate vitest project.
+None of these run under `rake default`, `uv run pytest`, `go test ./...`, `npm test` or
+`cargo test`. Each is gated idiomatically for its language: a separate rake task, a
+deselected pytest marker, a build tag, a separate vitest project, and a cargo feature.
 
 ## Smoke checks
 
@@ -77,13 +78,13 @@ node e2e/smoke.mjs iap-front --url https://your-host/ [--provider <substring>]
 ```
 
 `jwks` checks that Google's key endpoint still serves ES256/P-256 — the one external
-contract all four libraries share, so it gets the cheapest check on the most frequent
+contract all five libraries share, so it gets the cheapest check on the most frequent
 trigger. `iap-front` checks that a given host really is behind IAP, and needs a standing
 stack.
 
 ## Environment overrides
 
-Honoured by all four suites:
+Honoured by all five suites:
 
 | Variable | Purpose |
 |---|---|
@@ -131,8 +132,8 @@ Two rules the loaders enforce, worth knowing if you are debugging a skip:
 ## A green run can mean "verified nothing"
 
 Each suite **skips with a reason** when the artifact is absent, stale, or has no
-audience. That is right for a developer with no stack, but it means four skipped suites
-would otherwise print four passes and exit 0.
+audience. That is right for a developer with no stack, but it means five skipped suites
+would otherwise print five passes and exit 0.
 
 `run_all.sh` therefore preflights the artifact and **stops** if it is unusable. Anything
 running these in CI needs the same property — assert the preflight ran, or a nightly
@@ -154,7 +155,7 @@ Twelve checks per language, in four groups:
 4. **The claim shape** — bare `email`, opaque `sub`, `principal://` only in the nested
    `workforce_identity` claim, and a key-for-key drift check against
    `spec/fixtures/real_wif_iap_payload.json`. That last one is the highest-value test
-   here: if Google changes the shape, the offline suites in all four languages are
+   here: if Google changes the shape, the offline suites in all five languages are
    modelling a fiction, and this is what says so.
 
 ## Contributing
@@ -163,8 +164,8 @@ Four loaders read the capture artifact and must stay in step:
 `test/support/capture.ts`, `spec/support/live_capture.rb`, `tests/support/capture.py`,
 and the one inside `cruiap/live_iap_e2e_test.go`.
 
-Prefer adding a shared check to `smoke.mjs` over duplicating it four times. Keeping the
-expected pool and provider ids in one place stops them rotting in four test files the day
+Prefer adding a shared check to `smoke.mjs` over duplicating it five times. Keeping the
+expected pool and provider ids in one place stops them rotting in five test files the day
 the stack moves.
 
 Note the current shape of this: it needs a developer to stand up a stack and drive a
