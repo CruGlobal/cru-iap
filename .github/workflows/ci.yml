@@ -88,7 +88,7 @@ jobs:
       # up to v7, while v8 and v9 exist as full tags alone — so `@v9` does not
       # resolve at all. Pinned to the current release rather than dropping back to
       # the newest floating major, which is two majors behind.
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
