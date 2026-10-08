@@ -9,7 +9,7 @@ import "strings"
 //
 // Entries ending in ":" carry a variable suffix.
 //
-// If you add one here, add it to the other three too. A test in each language
+// If you add one here, add it to the other four too (Rust: rust/src/reasons.rs). A test in each language
 // asserts its own verifier can only emit listed reasons, and the Python suite
 // cross-checks the Ruby and TypeScript lists against its own; the Go suite
 // cross-checks all three against this one.

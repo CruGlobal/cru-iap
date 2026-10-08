@@ -56,3 +56,9 @@ __pycache__/
 # `uv build --out-dir dist-python`, as the release workflow runs it. Not the
 # default dist/, which is the TypeScript build output.
 /dist-python/
+
+# Rust crate: build output. Cargo.lock is not committed: this is a library, a
+# git consumer resolves against its own lockfile, and CI should see what a
+# consumer resolving today would get.
+/rust/target/
+/rust/Cargo.lock

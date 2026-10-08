@@ -28,6 +28,16 @@ terraform apply -var-file=wif.tfvars
 terraform output iap_audience        # → export IAP_AUDIENCE=…
 ```
 
+Teardown has one snag: `terraform destroy` fails with *"A credential can only be
+deleted if it is disabled"* on the WIF variant. Disable the OAuth client credential
+first, then destroy again:
+
+```sh
+curl -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  "https://iam.googleapis.com/v1/projects/PROJECT/locations/global/oauthClients/CLIENT/credentials/CRED?updateMask=disabled" \
+  -d '{"disabled":true}'
+```
+
 State is **local** (`terraform.tfstate`, gitignored) — nothing else reads this
 stack's outputs, so a remote backend would only add a stale-lock failure mode.
 
