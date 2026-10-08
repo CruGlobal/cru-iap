@@ -7,6 +7,6 @@
     "capture": "node capture_assertion.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.62.0"
+    "playwright": "^1.63.0"
   }
 }
