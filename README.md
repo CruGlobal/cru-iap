@@ -7,9 +7,9 @@ This library verifies the IAP assertion JWT on an incoming request and returns e
 email identity or a typed rejection reason. It is built for Cru's internal applications,
 but nothing in it is Cru-specific.
 
-**Four libraries, one repository.** The applications behind IAP are Rails, Next.js,
-FastAPI and Go, and the claim-shape knowledge documented below was expensive enough to
-learn that maintaining four divergent copies of it would be a mistake.
+**Five libraries, one repository.** The applications behind IAP are Rails, Next.js,
+FastAPI, Go and Rust, and the claim-shape knowledge documented below was expensive enough
+to learn that maintaining five divergent copies of it would be a mistake.
 
 ```ruby
 gem "cru_iap", github: "CruGlobal/cru-iap"
@@ -18,20 +18,23 @@ gem "cru_iap", github: "CruGlobal/cru-iap"
 npm install @cruglobal/cru-iap
 uv add cru-iap
 go get github.com/CruGlobal/cru-iap/cruiap
+cargo add cru-iap --git https://github.com/CruGlobal/cru-iap --tag vX.Y.Z
 ```
 
-| | Ruby | TypeScript | Python | Go |
-|---|---|---|---|---|
-| Source | `lib/` | `src/` | `cru_iap/` | `cruiap/` |
-| Tests | `spec/` | `test/` | `tests/` | `cruiap/*_test.go` |
-| Runtime dependency | `googleauth` | `jose` | `pyjwt[crypto]` | **none** (stdlib) |
-| Entry point | `CruIap::TokenVerifier.from_request` | `verifyRequest` | `verify_request` | `VerifyRequest` |
+| | Ruby | TypeScript | Python | Go | Rust |
+|---|---|---|---|---|---|
+| Source | `lib/` | `src/` | `cru_iap/` | `cruiap/` | `rust/src/` |
+| Tests | `spec/` | `test/` | `tests/` | `cruiap/*_test.go` | `rust/tests/` |
+| Runtime dependency | `googleauth` | `jose` | `pyjwt[crypto]` | **none** (stdlib) | `jsonwebtoken` |
+| Entry point | `CruIap::TokenVerifier.from_request` | `verifyRequest` | `verify_request` | `VerifyRequest` | `verify_request` |
 
 The npm package and the Python package are published to their registries; the gem is
-installed from git and the Go package needs no registry at all, since `go get` resolves
-the version straight from the tag. Every language's manifest sits at the repository root,
-so a bare-repository-URL install still works for all four — which is how you install an
-unreleased commit:
+installed from git, the Go package needs no registry at all, since `go get` resolves
+the version straight from the tag, and the crate is installed from git like the gem.
+Every other language's manifest sits at the repository root; the crate's sits in `rust/`,
+which Cargo finds on its own when it searches a git dependency for a package by name. So
+a bare-repository-URL install works for all five, which is how you install an unreleased
+commit:
 
 ```sh
 npm install github:CruGlobal/cru-iap
@@ -42,7 +45,7 @@ The gem name is underscored while the repository is hyphenated, so `Bundler.requ
 resolves straight to `lib/cru_iap.rb`; the npm package builds on install via `prepare`,
 which is what makes a git install work without a registry.
 
-All four read the same pinned capture of a real Google assertion
+All five read the same pinned capture of a real Google assertion
 (`spec/fixtures/real_wif_iap_payload.json`), so they cannot quietly drift apart about
 what IAP actually sends. The rejection vocabulary is cross-checked mechanically too —
 see [Rejection reasons](#rejection-reasons).
@@ -70,7 +73,7 @@ which a test enforces in a subprocess so its own imports cannot mask a leak.
 ## Configuration
 
 `IAP_AUDIENCE` is read from the environment by default, at call time rather than at
-import time, in all four languages. It is a **resource path** — not a URL and not a
+import time, in all five languages. It is a **resource path** — not a URL and not a
 client ID — and its shape depends on how IAP is fronted:
 
 | IAP mode | `aud` |
@@ -360,6 +363,70 @@ func RequireIAP(next http.Handler) http.Handler {
 }
 ```
 
+## Usage (Rust)
+
+```rust
+let result = match cru_iap::dev_bypass() {
+    Some(identity) => Ok(identity),
+    None => cru_iap::verify_request(request.headers()).await,
+};
+
+match result {
+    Ok(identity) => provision_user(&identity.email, identity.name.as_deref()).await,
+    // fail closed: never fall through to a dev stub
+    Err(rejection) => tracing::warn!(reason = rejection.reason(), "IAP auth rejected"),
+}
+```
+
+`verify` and `verify_request` return `Result<Identity, Rejection>`, so the compiler makes
+you handle the rejection. They **never panic**: a panic anywhere inside, a custom key
+source's included, becomes `unexpected_error` (unless the binary is built with
+`panic = "abort"`). `verify_request` takes an `http::HeaderMap`, which is what axum,
+hyper and reqwest all use. `Verifier::new()` takes `.audience(..)`, `.key_source(..)`
+and `.clock_tolerance(..)` for anything the free functions do not cover.
+
+Cargo features:
+
+| Feature | Default | What it adds |
+|---|---|---|
+| `remote-keys` | on | `RemoteKeys`: fetches and caches Google's key set with reqwest (rustls). Off, you supply a `KeySource`, and reqwest and tokio drop out. |
+| `axum` | off | `cru_iap::axum::IapLayer` and an `Identity` extractor, for axum 0.8. |
+
+Three Rust-specific notes:
+
+- **jsonwebtoken does the cryptography**, on the aws-lc-rs backend, which is the same
+  provider reqwest's rustls already builds. Its typed error kinds are mapped onto the
+  shared vocabulary, like jose's and PyJWT's are. Two checks are not left to it: `alg` is
+  read off the header first, because its `Algorithm` enum has no `none` and would call
+  that a JSON error rather than alg confusion, and `iss` is re-asserted afterwards.
+- **Two jsonwebtoken defaults are overridden** to match the siblings: its 60s leeway on
+  `exp` becomes zero, and its skipped `nbf` check is turned on.
+- **Logging goes through `tracing`**, silent until the application installs a
+  subscriber, the same way the Python package follows its own convention.
+
+### axum middleware: `cru_iap::axum`
+
+```rust
+use axum::{Router, routing::get};
+use cru_iap::{Identity, axum::IapLayer};
+
+let app = Router::new()
+    .route("/", get(|identity: Identity| async move { identity.email }))
+    .route("/health", get(|| async { "ok" }))
+    .layer(IapLayer::new().public_prefixes(["/health"]));
+```
+
+The same gate as [`@cruglobal/cru-iap/next`](#nextjs-middleware--cruglobalcru-iapnext):
+it fails closed, runs the dev bypass first (which also sees an audience passed in code),
+logs one `iap_rejected` line with the reason and path, and answers 401, never a
+redirect. Public prefixes match the same way, so write directory prefixes with a trailing
+slash.
+
+There are no identity headers. The verified `Identity` travels in request extensions,
+which a client cannot set, so there is nothing to strip and no injection point on a
+public path. The `Identity` extractor answers 401 when the layer did not put one there,
+so a route mounted outside the gate fails closed too.
+
 ## Migrating from application-level OIDC
 
 If an application currently runs its own Okta OIDC — Auth.js/next-auth, authlib, or
@@ -395,6 +462,9 @@ from cru_iap import login_url, logout_url
 cruiap.LoginURL("/dashboard")  // "/dashboard?login=true"
 cruiap.LogoutURL("")           // "/?gcp-iap-mode=CLEAR_LOGIN_COOKIE"
 ```
+```rust
+cru_iap::login_url("/dashboard")  // "/dashboard?login=true"
+```
 
 Why not interpolate a string at the call site — each of these is a real mistake:
 
@@ -410,7 +480,7 @@ Why not interpolate a string at the call site — each of these is a real mistak
   idempotent.
 
 The two query literals are Google's, and a typo in one language would be a silent
-failure in that language only — so they are cross-checked across all four by a test.
+failure in that language only — so they are cross-checked across all five by a test.
 
 ## The dev bypass
 
@@ -434,6 +504,12 @@ result, bypassed := cruiap.DevBypass()
 if !bypassed {
     result = cruiap.VerifyRequest(ctx, r, cruiap.WithAudience(audience))
 }
+```
+```rust
+let result = match cru_iap::dev_bypass() {
+    Some(identity) => Ok(identity),
+    None => verifier.verify_request(headers).await,
+};
 ```
 
 Putting it first is safe, which is the whole design:
@@ -649,7 +725,7 @@ denial path is broken.
 
 ## Rejection reasons
 
-`REASONS` is a single vocabulary shared across all four languages, so every application
+`REASONS` is a single vocabulary shared across all five languages, so every application
 behind IAP can file the same queries regardless of stack. Entries ending in `:` carry a
 variable suffix.
 
@@ -664,17 +740,17 @@ in the same queries as a real one instead of being invisible.
 
 A test in each language asserts its verifier can only produce listed reasons. Across
 languages, the Python suite parses the Ruby and TypeScript lists out of their source and
-asserts all three are identical, and the Go suite checks all three against its own — so
-a reason added in one place and forgotten in another fails there. The comparison is
+asserts all three are identical, and the Go and Rust suites each check all the others
+against their own, so a reason added in one place and forgotten in another fails there. The comparison is
 element-by-element, so add a reason in every language at once, **in the same position**.
 
 These mappings differ because the underlying libraries do:
 
-| Condition | Ruby (googleauth) | TypeScript (jose) | Python (PyJWT) | Go (stdlib) |
-|---|---|---|---|---|
-| token's `kid` not in the JWKS | `signature_error:Token not verified as issued by Google` | `signature_error:no_matching_key` | `signature_error:no_matching_key` | `signature_error:no_matching_key` |
-| JWKS unreachable / non-200 / unparseable | `verification_error:KeySourceError` | same | same | same |
-| wrong `iss` | `issuer_mismatch`, or `bad_iss:` from the re-assert | same | same | `issuer_mismatch` only |
+| Condition | Ruby (googleauth) | TypeScript (jose) | Python (PyJWT) | Go (stdlib) | Rust (jsonwebtoken) |
+|---|---|---|---|---|---|
+| token's `kid` not in the JWKS | `signature_error:Token not verified as issued by Google` | `signature_error:no_matching_key` | `signature_error:no_matching_key` | `signature_error:no_matching_key` | `signature_error:no_matching_key` |
+| JWKS unreachable / non-200 / unparseable | `verification_error:KeySourceError` | same | same | same | same |
+| wrong `iss` | `issuer_mismatch`, or `bad_iss:` from the re-assert | same | same | `issuer_mismatch` only | same as Ruby |
 
 Two library quirks are pinned by tests rather than trusted. `PyJWKClient` raises the
 plain base `PyJWKClientError` for two unrelated conditions — no matching `kid`, and a
@@ -713,6 +789,11 @@ uv run pytest                 # offline, no credentials
 # Go
 go test ./cruiap/             # offline, no credentials, no dependencies
 go vet ./...
+
+# Rust
+cd rust
+cargo test --features axum    # offline, no credentials
+cargo clippy --all-features --all-targets
 ```
 
 No default suite touches the network. The end-to-end suites, which verify against real
@@ -720,7 +801,7 @@ Google infrastructure, are gated separately in each language — see [`e2e/`](e2
 
 ### Releases
 
-All four libraries share one version and one tag. Releases are cut by
+All five libraries share one version and one tag. Releases are cut by
 [release-please](https://github.com/googleapis/release-please), which keeps a standing
 `chore(main): release X.Y.Z` pull request on `main` built from
 [conventional-commit](https://www.conventionalcommits.org/) subjects — this repo scopes
@@ -728,14 +809,14 @@ them by language (`feat(ts):`, `fix(ruby):`, `docs(python):`).
 
 Merging that PR is the whole release:
 
-1. It bumps the version in all four declared places — `package.json` (+
-   `package-lock.json`), `pyproject.toml`, `cru_iap/__init__.py` and
-   `lib/cru_iap/version.rb`. It has to move all four:
-   `tests/test_package.py::test_the_four_declared_versions_agree` fails the build
+1. It bumps the version in all five declared places: `package.json` (+
+   `package-lock.json`), `pyproject.toml`, `cru_iap/__init__.py`,
+   `lib/cru_iap/version.rb` and `rust/Cargo.toml`. It has to move all five:
+   `tests/test_package.py::test_the_declared_versions_agree` fails the build
    otherwise.
 2. It writes the new `CHANGELOG.md` section above the previous one.
 3. release-please tags `vX.Y.Z` and publishes a GitHub Release. The tag is what `go get`
-   resolves, so Go needs nothing further.
+   resolves, so Go needs nothing further, and neither does a Rust consumer pinning `tag`.
 4. That Release triggers [`release.yml`](.github/workflows/release.yml), which re-runs the
    checks and publishes `@cruglobal/cru-iap` to npm and `cru-iap` to PyPI. Both use
    trusted publishing (OIDC) — there is no registry token in this repository.
@@ -745,7 +826,8 @@ when a change deserves the kind of writeup the 0.1.0 and 0.2.0 entries have — 
 and `CHANGELOG.md` are both editable in place, and the prose is the point of that file.
 
 Pre-1.0, features move the minor and breaking changes are capped at minor. The gem is not
-pushed to RubyGems; its version moves only to stay in step.
+pushed to RubyGems and the crate is not pushed to crates.io (`publish = false`); their
+versions move only to stay in step.
 
 #### The PR title is the commit, and it decides whether a release happens at all
 
