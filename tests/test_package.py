@@ -84,13 +84,13 @@ def test_the_reason_list_matches_the_typescript_package():
     assert list(cru_iap.REASONS) == ts_reasons
 
 
-def test_the_four_declared_versions_agree():
-    # The version lives in four files, one per language. A consumer's lockfile
+def test_the_declared_versions_agree():
+    # The version lives in five files, one per language plus pyproject. A consumer's lockfile
     # records whichever one its ecosystem read, so a mismatch means "cru_iap
     # 0.1.0" in a Gemfile.lock and "cru-iap 0.2.0" in a uv.lock describe the
     # same tree.
     #
-    # release-please moves all four in one commit (see
+    # release-please moves all five in one commit (see
     # release-please-config.json's extra-files), so this now doubles as the
     # guard on that config: if this fails on a "chore(main): release X.Y.Z"
     # pull request, an extra-file stopped matching — most likely because an
@@ -107,6 +107,9 @@ def test_the_four_declared_versions_agree():
         "typescript": json.loads((ROOT / "package.json").read_text())["version"],
         "pyproject": re.search(
             r'^version\s*=\s*"([^"]+)"', (ROOT / "pyproject.toml").read_text(), re.M
+        ).group(1),
+        "rust": re.search(
+            r'^version\s*=\s*"([^"]+)"', (ROOT / "rust" / "Cargo.toml").read_text(), re.M
         ).group(1),
     }
 
