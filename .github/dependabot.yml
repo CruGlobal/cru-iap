@@ -52,9 +52,9 @@ updates:
       include: "scope"
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Python — pyproject.toml's runtime `dependencies` plus the `dev` extra.
+  # Python — pyproject.toml + uv.lock (runtime `dependencies` plus `dev` extra).
   # ──────────────────────────────────────────────────────────────────────────
-  - package-ecosystem: "pip"
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
