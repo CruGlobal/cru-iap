@@ -44,7 +44,7 @@ jobs:
       # needs npm >= 11.5.1, which only ships with Node 24. The floor is
       # still proven on every PR by the CI matrix.
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: npm
