@@ -100,8 +100,6 @@ async fn public_prefixes_skip_the_gate_by_exact_or_prefix_match() {
 
 #[tokio::test]
 async fn the_extractor_fails_closed_on_a_public_path() {
-    // A handler that asks for an Identity behind a public prefix gets a 401,
-    // never a client-supplied one.
     let router = Router::new()
         .route(
             "/open/who",
@@ -134,8 +132,6 @@ async fn the_dev_bypass_names_the_developer_locally() {
 
 #[tokio::test]
 async fn the_dev_bypass_sees_an_audience_passed_in_code() {
-    // Otherwise IapLayer::new().verifier(Verifier::new().audience(..)) would
-    // leave guard 1 unarmed.
     let signer = Signer::new();
     let app = app(IapLayer::new()
         .verifier(signer.verifier())

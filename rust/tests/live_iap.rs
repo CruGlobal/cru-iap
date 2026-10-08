@@ -113,8 +113,6 @@ macro_rules! capture_or_skip {
 
 #[tokio::test]
 async fn googles_live_key_set_parses() {
-    // Needs no capture: the half of the live path that is ours alone (reqwest,
-    // rustls, the JWK parse), against the real endpoint.
     let body = reqwest::get(cru_iap::IAP_JWKS_URL)
         .await
         .unwrap()
@@ -133,8 +131,6 @@ async fn googles_live_key_set_parses() {
 
 #[test]
 fn the_assertion_was_minted_by_google_minutes_ago() {
-    // Guards the file: a stale or hand-copied token would make the rest a
-    // re-test of the offline fixtures.
     let capture = capture_or_skip!();
     let age = now() - capture.claims["iat"].as_i64().unwrap();
     assert!((0..600).contains(&age), "assertion is {age}s old");
@@ -146,7 +142,6 @@ async fn verifies_against_googles_live_jwks() {
     let identity = capture.verifier().verify(&capture.assertion).await.unwrap();
     assert_eq!(identity.reason, IAP_JWT);
     assert_eq!(identity.email, capture.expected_email);
-    // Display names must fall back to the email local part.
     assert_eq!(identity.name, None);
 }
 
@@ -158,9 +153,6 @@ async fn verifies_straight_off_the_headers() {
     let identity = capture.verifier().verify_request(&headers).await.unwrap();
     assert_eq!(identity.email, capture.expected_email);
 }
-
-// Each below takes the same genuine token and breaks one thing. Without them,
-// "it verified" could mean the verifier accepts anything.
 
 #[tokio::test]
 async fn is_rejected_once_its_payload_is_edited() {
@@ -202,7 +194,6 @@ async fn is_rejected_with_no_audience_configured() {
 
 #[tokio::test]
 async fn claims_re_signed_by_our_own_key_are_rejected() {
-    // Proof the live JWKS fetch is load-bearing.
     let capture = capture_or_skip!();
     let mut ours = Signer::new();
     ours.kid = "not-googles-key".into();
@@ -237,9 +228,6 @@ fn the_claim_shape_production_actually_emits() {
         .unwrap_or("");
     assert!(principal.starts_with("principal://iam.googleapis.com/"));
 
-    // Drift detector: if this fails, every language's offline suite is
-    // modelling a shape that no longer exists. Re-capture and update the
-    // pinned fixture.
     let pinned: Value =
         serde_json::from_str(&repo_file("spec/fixtures/real_wif_iap_payload.json")).unwrap();
     let mut live: Vec<&String> = capture.claims.keys().collect();

@@ -81,8 +81,6 @@ fn matches_the_go_package() {
 
 #[test]
 fn the_iap_control_queries_match_across_languages() {
-    // A typo in any one language is a silent sign-in loop, or a sign-out that
-    // does not sign out, in that language only.
     for (language, file, login, logout) in [
         (
             "Ruby",
@@ -130,8 +128,6 @@ fn is_known_reason_accepts_the_list_and_suffixes_only() {
 
 #[tokio::test]
 async fn bad_iss_is_reachable_only_behind_the_library_check() {
-    // jsonwebtoken checks iss first and reports issuer_mismatch; bad_iss: is
-    // the re-assertion that only fires if that check is ever dropped.
     let signer = Signer::new();
     for iss in ["", "https://evil.example", "https://accounts.google.com"] {
         let result = verify_with(&signer, iap_claims(serde_json::json!({ "iss": iss }))).await;
