@@ -7,7 +7,7 @@ on:
 
 jobs:
   # The only job here that touches the network, and the only one that can catch
-  # Google changing the contract all four libraries share. Deliberately not
+  # Google changing the contract all five libraries share. Deliberately not
   # gated on any language's toolchain or dependencies: it is stdlib-only Node,
   # so it still reports even when a language job is broken.
   #
@@ -134,3 +134,38 @@ jobs:
       # The e2e suite is behind the `e2e` build tag and so is not compiled here.
       - name: Unit tests
         run: go test ./cruiap/...
+
+  cargo:
+    name: Rust
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 1.96 is the floor in rust/Cargo.toml; stable is current.
+        rust: ["1.96", "stable"]
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-features --all-targets -- -D warnings
+
+      # The live suite needs the `e2e` feature and is not compiled here.
+      - name: Unit tests (all features but e2e)
+        run: cargo test --features axum
+
+      # Proves the crate still builds and verifies with a caller-supplied
+      # KeySource and no reqwest or tokio.
+      - name: Unit tests (no default features)
+        run: cargo test --no-default-features
