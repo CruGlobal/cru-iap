@@ -5,7 +5,7 @@ files the same Datadog queries.
 
 Entries ending in ``:`` carry a variable suffix.
 
-If you add one here, add it to the other three too — in the same ORDER, since
+If you add one here, add it to the other four too (Go and Rust included) — in the same ORDER, since
 the cross-language tests compare them element by element (``tests/test_package.py``
 checks Ruby and TypeScript against this list; ``cruiap/vocabulary_test.go`` checks
 all three against Go's). A test in each language additionally asserts its own
