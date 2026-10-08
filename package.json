@@ -1,6 +1,6 @@
 {
   "name": "@cruglobal/cru-iap",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Verify Google Identity-Aware Proxy assertion JWTs. TypeScript sibling of the cru_iap Ruby gem.",
   "license": "MIT",
   "repository": {
