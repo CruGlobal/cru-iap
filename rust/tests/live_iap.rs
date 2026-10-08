@@ -111,6 +111,26 @@ macro_rules! capture_or_skip {
     };
 }
 
+#[tokio::test]
+async fn googles_live_key_set_parses() {
+    // Needs no capture: the half of the live path that is ours alone (reqwest,
+    // rustls, the JWK parse), against the real endpoint.
+    let body = reqwest::get(cru_iap::IAP_JWKS_URL)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let keys = cru_iap::parse_jwks(&body).unwrap();
+    assert!(!keys.is_empty(), "Google serves no usable P-256 keys");
+
+    let kid = keys.keys().next().unwrap();
+    let source = cru_iap::RemoteKeys::google();
+    assert!(cru_iap::KeySource::key_for(source, kid).await.is_ok());
+    let unknown = cru_iap::KeySource::key_for(source, "no-such-kid").await;
+    assert_eq!(unknown.err(), Some(cru_iap::KeyError::UnknownKid));
+}
+
 #[test]
 fn the_assertion_was_minted_by_google_minutes_ago() {
     // Guards the file: a stale or hand-copied token would make the rest a
