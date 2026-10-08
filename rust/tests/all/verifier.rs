@@ -56,7 +56,6 @@ async fn the_name_claim() {
         Some("Alice Example")
     );
     assert_eq!(name(iap_claims(json!({ "name": "   " }))).await, None);
-    // Decoration, not identity: a non-string degrades rather than rejecting.
     assert_eq!(name(iap_claims(json!({ "name": ["Alice"] }))).await, None);
 }
 
@@ -135,7 +134,6 @@ async fn rejects_alg_confusion_and_none() {
 
 #[tokio::test]
 async fn rejects_a_mangled_signature() {
-    // ES256 in JWS is the fixed-width 64-byte r||s form, never DER.
     let signer = Signer::new();
     let token = signer.sign(&iap_claims(json!({})));
     let parts: Vec<&str> = token.split('.').collect();
@@ -216,7 +214,6 @@ async fn the_expiry() {
         reason(&verify_with(&signer, iap_claims(json!({ "exp": now() - 5 }))).await),
         EXPIRED_TOKEN
     );
-    // The Ruby jwt gem, jose and PyJWT all skip the check when exp is absent.
     assert_eq!(
         reason(&verify_with(&signer, iap_claims(json!({ "exp": null }))).await),
         MISSING_EXP
@@ -229,7 +226,6 @@ async fn the_expiry() {
 
 #[tokio::test]
 async fn defaults_to_no_clock_tolerance_and_honours_one() {
-    // jsonwebtoken's own default leeway is 60s; the siblings' is zero.
     let signer = Signer::new();
     let token = signer.sign(&iap_claims(json!({ "exp": now() - 5 })));
     assert_eq!(
@@ -283,8 +279,6 @@ async fn never_falls_back_to_sub() {
 
 #[tokio::test]
 async fn rejects_the_principal_uri_that_survives_the_colon_strip() {
-    // "principal:" is stripped as a namespace, leaving "//iam…/subject/alice@cru.org",
-    // which the address pattern alone would accept.
     let signer = Signer::new();
     let email =
         "principal://iam.googleapis.com/locations/global/workforcePools/p/subject/alice@cru.org";
@@ -382,7 +376,6 @@ async fn verify_request() {
         "case-insensitive"
     );
 
-    // Two assertions is not a shape IAP produces; refuse to pick one.
     headers.append(HEADER, HeaderValue::from_str(&token).unwrap());
     assert_eq!(
         reason(&signer.verifier().verify_request(&headers).await),

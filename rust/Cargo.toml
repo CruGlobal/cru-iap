@@ -38,9 +38,8 @@ async-trait = "0.1"
 base64 = "0.22"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 http = "1"
-# aws_lc_rs rather than rust_crypto: it is the same provider reqwest's rustls
-# already builds, and rust_crypto drags in the `rsa` crate for an algorithm IAP
-# never uses.
+# aws_lc_rs: the provider reqwest's rustls already builds. rust_crypto would
+# drag in the `rsa` crate for an algorithm IAP never uses.
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
 regex = "1"
 serde_json = "1"

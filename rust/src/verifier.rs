@@ -171,9 +171,8 @@ impl Verifier {
         }
 
         let header = read_header(token)?;
-        // Pinned before touching a key: a key set that also published an RSA
-        // or HMAC key, or a token claiming "none", must not be able to talk us
-        // into a weaker verification.
+        // Pinned before touching a key, so an RSA or HMAC key, or "none", can
+        // never talk us into a weaker verification.
         if header.get("alg").and_then(Value::as_str) != Some("ES256") {
             return Err(verification_error("AlgNotAllowed"));
         }
@@ -193,9 +192,8 @@ impl Verifier {
         let mut validation = Validation::new(Algorithm::ES256);
         validation.set_issuer(&[IAP_ISSUER]);
         validation.set_audience(&[&audience]);
-        // Required explicitly. IAP always sets exp, but the Ruby jwt gem, jose
-        // and PyJWT all skip the expiry check when it is absent, so it is
-        // never assumed.
+        // IAP always sets exp, but the Ruby jwt gem, jose and PyJWT all skip the
+        // check when it is absent, so it is required rather than assumed.
         validation.set_required_spec_claims(&["exp", "iss", "aud"]);
         // jsonwebtoken skips nbf by default; jose, PyJWT and the Ruby jwt gem
         // all enforce it when present.
@@ -276,8 +274,7 @@ fn reason_for(kind: &ErrorKind) -> String {
                 reasons::VERIFICATION_ERROR
             ),
         },
-        // A present but unreadable exp is no expiry at all; the siblings say
-        // missing_exp too.
+        // An unreadable exp is no expiry at all; the siblings say missing_exp too.
         ErrorKind::InvalidClaimFormat(claim) if claim == "exp" => reasons::MISSING_EXP.into(),
         ErrorKind::InvalidClaimFormat(claim) => {
             format!("{}InvalidClaimFormat_{claim}", reasons::VERIFICATION_ERROR)
@@ -331,15 +328,13 @@ fn identity_from(claims: Map<String, Value>) -> VerifyResult {
         }
     };
 
-    // Two reasons on purpose. missing_email: the pool never sent one, an
-    // infrastructure fix. malformed_subject: something arrived that is not an
-    // address. Different fixes, so keep them apart in Datadog.
+    // Kept apart from malformed_subject on purpose: a missing email is a pool
+    // (terraform) fix, a malformed one is not.
     if email.is_empty() {
         return Err(Rejection::new(reasons::MISSING_EMAIL));
     }
-    // The pattern alone is not enough: RFC 5322 allows "/" in a local part, so
-    // principal://.../subject/alice@cru.org matches it. No real identity
-    // contains a slash or backslash.
+    // RFC 5322 allows "/" in a local part, so principal://.../subject/a@cru.org
+    // passes the pattern; no real identity contains a slash or backslash.
     if !EMAIL_PATTERN.is_match(&email) || email.contains(['/', '\\']) {
         let payload = describe(&claims);
         tracing::warn!(normalized = %email, payload, "[cru-iap] malformed subject");

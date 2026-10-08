@@ -2,7 +2,6 @@ use cru_iap::{login_url, logout_url};
 
 #[test]
 fn login_url_never_returns_bare_slash() {
-    // IAP sends bare / to the IdP, which sends it back to /, forever.
     for target in ["", "/", "   "] {
         assert_eq!(login_url(target), "/?login=true", "target {target:?}");
     }
@@ -21,8 +20,6 @@ fn login_url_cases() {
             "/dashboard?tab=reports&login=true",
         ),
         ("/dashboard?", "/dashboard?login=true"),
-        // Appended naively, the param lands in the fragment and never leaves
-        // the browser.
         ("/dashboard#reports", "/dashboard?login=true#reports"),
         (
             "/dashboard?tab=1#reports",
