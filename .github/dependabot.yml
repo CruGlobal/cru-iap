@@ -7,8 +7,9 @@ version: 2
 # for which of these merge without a human.
 #
 # Unlike the cru-flags clients, this repo does ship runtime dependencies
-# (jose, pyjwt[crypto], googleauth, the Go module requirements), so a
-# grouped PR here can move library-consumer-facing code, not just tooling.
+# (jose, pyjwt[crypto], googleauth, jsonwebtoken, the Go module
+# requirements), so a grouped PR here can move library-consumer-facing
+# code, not just tooling.
 
 updates:
   # ──────────────────────────────────────────────────────────────────────────
@@ -100,6 +101,25 @@ updates:
     open-pull-requests-limit: 5
     groups:
       go-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Rust — rust/Cargo.toml for the Rust binding (no committed lockfile).
+  # ──────────────────────────────────────────────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/rust"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      rust-dependencies:
         patterns:
           - "*"
         update-types:
