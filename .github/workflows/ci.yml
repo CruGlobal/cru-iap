@@ -31,12 +31,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        ruby: ["3.2", "3.4"]
+        # See .github/scripts/ci-version.sh for what each leg resolves to.
+        version: [min, latest]
     steps:
       - uses: actions/checkout@v5
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(.github/scripts/ci-version.sh ruby ${{ matrix.version }})
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "ruby $version"
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: ${{ matrix.ruby }}
+          ruby-version: ${{ steps.version.outputs.version }}
           bundler-cache: true
 
       # Two steps rather than one `rspec`, so a failure names which layer
@@ -53,13 +60,19 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 20 is the package's declared floor; 24 is what bills runs.
-        node: ["20", "24"]
+        # latest is the newest LTS, which is what consumers (bills) run.
+        version: [min, latest]
     steps:
       - uses: actions/checkout@v5
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(.github/scripts/ci-version.sh node ${{ matrix.version }})
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "node $version"
       - uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ steps.version.outputs.version }}
           cache: npm
 
       # `npm ci` runs `prepare`, so this also proves the build a consumer gets
@@ -80,10 +93,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 3.11 is the floor declared in pyproject.toml; 3.13 is current stable.
-        python: ["3.11", "3.13"]
+        version: [min, latest]
     steps:
       - uses: actions/checkout@v5
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(.github/scripts/ci-version.sh python ${{ matrix.version }})
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "python $version"
+      # uv can't resolve `3.x` itself, so setup-python turns it into a real
+      # version for `uv run --python`.
+      - uses: actions/setup-python@v6
+        id: python
+        with:
+          python-version: ${{ steps.version.outputs.version }}
       # Exact tag, not a floating major: setup-uv publishes moving `vN` refs only
       # up to v7, while v8 and v9 exist as full tags alone — so `@v9` does not
       # resolve at all. Pinned to the current release rather than dropping back to
@@ -95,20 +119,26 @@ jobs:
       # --frozen so a stale uv.lock fails the build rather than being silently
       # re-resolved into something no one has run.
       - name: Unit tests
-        run: uv run --frozen --python ${{ matrix.python }} pytest
+        run: uv run --frozen --python ${{ steps.python.outputs.python-version }} pytest
 
   gotest:
     name: Go
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 1.25 is the floor in go.mod and what wormhole runs; 1.26 is current.
-        go: ["1.25", "1.26"]
+        # min (go.mod's floor) is also what wormhole runs.
+        version: [min, latest]
     steps:
       - uses: actions/checkout@v5
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(.github/scripts/ci-version.sh go ${{ matrix.version }})
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "go $version"
       - uses: actions/setup-go@v6
         with:
-          go-version: ${{ matrix.go }}
+          go-version: ${{ steps.version.outputs.version }}
           # setup-go keys its module cache on go.sum, which a stdlib-only package
           # does not have — leaving it on emits a "Restore cache failed" warning
           # on every run for a cache that could never hold anything.
@@ -140,30 +170,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # msrv reads `rust-version` from rust/Cargo.toml, so bumping the
-        # floor doesn't rename the job (a required check in the ruleset).
-        rust: ["msrv", "stable"]
+        version: [min, latest]
     defaults:
       run:
         working-directory: rust
     steps:
       - uses: actions/checkout@v5
-      - name: Resolve toolchain
-        id: toolchain
-        env:
-          RUST: ${{ matrix.rust }}
+      - name: Resolve version
+        id: version
         run: |
-          if [ "$RUST" = msrv ]; then
-            version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
-            test -n "$version"
-          else
-            version=$RUST
-          fi
+          version=$(../.github/scripts/ci-version.sh rust ${{ matrix.version }})
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "toolchain: $version"
+          echo "rust $version"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
+          toolchain: ${{ steps.version.outputs.version }}
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
