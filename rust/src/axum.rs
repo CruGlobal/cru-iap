@@ -98,7 +98,7 @@ impl IapLayer {
             .any(|prefix| path == prefix || path.starts_with(prefix.as_str()))
     }
 
-    async fn identify(&self, headers: &HeaderMap, path: &str) -> Result<Identity, Response> {
+    async fn identify(&self, headers: &HeaderMap, path: &str) -> Result<Identity, Box<Response>> {
         let audience = self.verifier.configured_audience();
         // An audience passed in code is as much proof of a real IAP
         // environment as one in the env, so the bypass has to see it.
@@ -119,7 +119,7 @@ impl IapLayer {
             } else {
                 UNAUTHORIZED.to_string()
             };
-            (StatusCode::UNAUTHORIZED, body).into_response()
+            Box::new((StatusCode::UNAUTHORIZED, body).into_response())
         })
     }
 }
@@ -182,7 +182,7 @@ where
                     request.extensions_mut().insert(identity);
                     inner.call(request).await
                 }
-                Err(response) => Ok(response),
+                Err(response) => Ok(*response),
             }
         })
     }
