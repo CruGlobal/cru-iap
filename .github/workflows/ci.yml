@@ -140,16 +140,30 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 1.96 is the floor in rust/Cargo.toml; stable is current.
-        rust: ["1.96", "stable"]
+        # msrv reads `rust-version` from rust/Cargo.toml, so bumping the
+        # floor doesn't rename the job (a required check in the ruleset).
+        rust: ["msrv", "stable"]
     defaults:
       run:
         working-directory: rust
     steps:
       - uses: actions/checkout@v5
+      - name: Resolve toolchain
+        id: toolchain
+        env:
+          RUST: ${{ matrix.rust }}
+        run: |
+          if [ "$RUST" = msrv ]; then
+            version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+            test -n "$version"
+          else
+            version=$RUST
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "toolchain: $version"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: ${{ steps.toolchain.outputs.version }}
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
