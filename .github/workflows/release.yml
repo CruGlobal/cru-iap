@@ -98,7 +98,7 @@ jobs:
       # only up to v7, while v8 and v9 exist as full tags alone — so `@v9`
       # does not resolve at all. Same pin as ci.yml.
       - name: Install uv
-        uses: astral-sh/setup-uv@v9.0.0
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
 
