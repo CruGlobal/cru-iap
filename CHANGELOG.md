@@ -10,6 +10,13 @@ on, release-please generates entries from conventional-commit scopes and renders
 distinction as **`ts:`**, **`ruby:`**, and so on. See
 [Releases](https://github.com/CruGlobal/cru-iap#releases) for how a release is cut.
 
+## [0.2.2](https://github.com/CruGlobal/cru-iap/compare/v0.2.1...v0.2.2) (2026-10-08)
+
+
+### Fixed
+
+* **deps:** resync package-lock after dependabot merges ([#16](https://github.com/CruGlobal/cru-iap/issues/16)) ([7ee11f3](https://github.com/CruGlobal/cru-iap/commit/7ee11f3b4044a742632939a424bb50a43bae5d4f))
+
 ## [0.2.1](https://github.com/CruGlobal/cru-iap/compare/v0.2.0...v0.2.1) (2026-08-05)
 
 
