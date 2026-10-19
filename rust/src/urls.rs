@@ -21,6 +21,7 @@ pub fn login_url(target: &str) -> String {
 }
 
 /// `target` with IAP's cookie-clear mode appended. A blank target means "/".
+/// Not a full sign-out: the Google session survives (see README).
 pub fn logout_url(target: &str) -> String {
     with_param(target, LOGOUT_QUERY)
 }
