@@ -51,5 +51,8 @@ const withParam = (target: string, param: string): string => {
 /** The same target with IAP's login trigger appended. */
 export const loginUrl = (target = "/"): string => withParam(target, LOGIN_QUERY);
 
-/** The same target with IAP's cookie-clear mode appended. */
+/**
+ * The same target with IAP's cookie-clear mode appended.
+ * Not a full sign-out: the Google session survives (see README).
+ */
 export const logoutUrl = (target = "/"): string => withParam(target, LOGOUT_QUERY);
