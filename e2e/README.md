@@ -22,6 +22,7 @@ library's verifier, which fetches Google's live JWKS to check the real signature
 | `smoke.mjs` | Secret-free, browser-free checks. |
 | `okta/` | Scratch IdP objects and the Playwright capture driver. |
 | `terraform/` | The IAP stack the capture signs in to. |
+| `research/` | Write-ups of live experiments, e.g. [a per-session id in the assertion](research/wif-session-id.md). |
 
 ## Prerequisites
 
