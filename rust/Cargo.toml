@@ -1,0 +1,60 @@
+[package]
+name = "cru-iap"
+version = "0.2.1"
+edition = "2024"
+rust-version = "1.96"
+description = "Verify Google Identity-Aware Proxy assertion JWTs. Rust sibling of the cru_iap gem and the @cruglobal/cru-iap npm package."
+license = "MIT"
+repository = "https://github.com/CruGlobal/cru-iap"
+# Installed from git, like the gem. Refusing a registry publish means a stray
+# `cargo publish` cannot claim the name by accident.
+publish = false
+
+# Cargo finds this crate anywhere in the repository on a git install, so it
+# lives in its own directory with the standard layout.
+
+[[test]]
+name = "all"
+path = "tests/all/main.rs"
+
+# Behind a feature rather than #[ignore], so the default `cargo test` does not
+# even compile it: the offline suite must stay provably network-free.
+[[test]]
+name = "live_iap"
+path = "tests/live_iap.rs"
+required-features = ["e2e"]
+
+[features]
+default = ["remote-keys"]
+# The default key source: fetches and caches Google's key set over HTTPS. Turn
+# it off to supply your own `KeySource` and drop reqwest and tokio.
+remote-keys = ["dep:reqwest", "dep:tokio"]
+# `IapLayer` and an `Identity` extractor for axum 0.8.
+axum = ["dep:axum", "dep:tower-layer", "dep:tower-service"]
+e2e = ["remote-keys"]
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+http = "1"
+# aws_lc_rs: the provider reqwest's rustls already builds. rust_crypto would
+# drag in the `rsa` crate for an algorithm IAP never uses.
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
+regex = "1"
+serde_json = "1"
+tracing = "0.1"
+
+reqwest = { version = "0.13", optional = true, default-features = false, features = ["rustls", "json"] }
+tokio = { version = "1", optional = true, features = ["sync"] }
+
+axum = { version = "0.8", optional = true, default-features = false }
+tower-layer = { version = "0.3", optional = true }
+tower-service = { version = "0.3", optional = true }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
+p256 = { version = "0.13", features = ["ecdsa", "jwk"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+tower = { version = "0.5", features = ["util"] }

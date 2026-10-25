@@ -27,9 +27,9 @@ name: release-please
 #
 #   extra-files
 #     `release-type: node` only knows package.json and package-lock.json.
-#     The other three declared versions have to move in the same commit or
+#     The other four declared versions have to move in the same commit or
 #     the release PR cannot go green:
-#     tests/test_package.py::test_the_four_declared_versions_agree fails the
+#     tests/test_package.py::test_the_declared_versions_agree fails the
 #     build the moment they diverge. Go is absent on purpose — Go modules
 #     take their version from the git tag, which release-please creates.
 #
