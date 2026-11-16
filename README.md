@@ -216,7 +216,7 @@ reads it instead of re-verifying per route:
 | --- | --- |
 | `x-cru-iap-email` | the identity; always present |
 | `x-cru-iap-name` | display name; absent when the assertion carries no `name` claim |
-| `x-cru-iap-issued-at` | the assertion's `iat`, decimal; absent under the dev bypass |
+| `x-cru-iap-issued-at` | the assertion's `iat`, decimal; absent under the dev bypass. IAP re-signs per request, so this is request time, not sign-in time |
 
 ```ts
 import { identityFrom } from "@cruglobal/cru-iap";
