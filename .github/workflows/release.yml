@@ -6,11 +6,11 @@ name: release
 # created through the UI / gh CLI work too, and workflow_dispatch is
 # available for retrying a failed publish.
 #
-# Two of the four libraries publish to a registry from here. The gem and the
-# Go package do not: Go has no registry (the tag release-please pushes IS
-# the release), and the gem is still installed from git. Both jobs are
-# independent, so a PyPI misconfiguration cannot block the npm publish or
-# vice versa.
+# Two of the five libraries publish to a registry from here. The gem, the
+# crate and the Go package do not: Go has no registry (the tag release-please
+# pushes IS the release), and the gem and the crate are installed from git.
+# Both jobs are independent, so a PyPI misconfiguration cannot block the npm
+# publish or vice versa.
 
 on:
   release:

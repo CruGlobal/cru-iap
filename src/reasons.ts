@@ -5,7 +5,7 @@
  *
  * Entries ending in ":" carry a variable suffix.
  *
- * If you add one here, add it to the Ruby, Python and Go lists too — in the
+ * If you add one here, add it to the Ruby, Python, Go and Rust lists too — in the
  * same ORDER, since the cross-language tests compare them element by element
  * (tests/test_package.py checks Ruby and TypeScript against Python;
  * cruiap/vocabulary_test.go checks all three against Go). A test in each
