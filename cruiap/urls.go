@@ -34,6 +34,7 @@ func LoginURL(target string) string {
 
 // LogoutURL returns target with IAP's cookie-clear mode appended. An empty
 // target means "/".
+// Not a full sign-out: the Google session survives (see README).
 func LogoutURL(target string) string {
 	return withParam(target, LogoutQuery)
 }

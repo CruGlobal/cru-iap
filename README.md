@@ -412,6 +412,22 @@ Why not interpolate a string at the call site — each of these is a real mistak
 The two query literals are Google's, and a typo in one language would be a silent
 failure in that language only — so they are cross-checked across all four by a test.
 
+### `logout_url` is not a full sign-out
+
+It clears IAP's cookie only. The Google session at `auth.cloud.google` survives, so the
+next sign-in silently brings back the same person without asking Okta. That lasts until
+the Workforce Identity Federation pool's session duration runs out, so know what yours is
+set to.
+
+No app can end that session today (see [#13](https://github.com/CruGlobal/cru-iap/issues/13)).
+On a shared computer, point users to:
+
+- one browser profile per person, or a private window to switch accounts
+- signing out of the [Google Cloud console](https://console.cloud.google.com), which does
+  end the session. Not recommended: it works, but it's confusing for most staff.
+
+Consider saying this on your signed-out page.
+
 ## The dev bypass
 
 ```sh
@@ -494,7 +510,8 @@ routing layer, not authentication.
 - [ ] `CruIap::StripForwardedHost` inserted at position 0 (Rails), or the equivalent for
       Next.js. Go and FastAPI need nothing.
 - [ ] Sign-in built with `login_url` — **not** a hand-written `/`, which loops
-- [ ] Sign-out built with `logout_url`, so IAP clears the federated login cookie
+- [ ] Sign-out built with `logout_url`, so IAP clears the federated login cookie. It is
+      [not a full sign-out](#logout_url-is-not-a-full-sign-out)
 - [ ] Every surface that authenticates *itself* is listed in the IAP
       [`bypass_paths`](#surfaces-that-authenticate-themselves-need-bypass_paths), not just
       exempted in application code

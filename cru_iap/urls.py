@@ -61,5 +61,8 @@ def login_url(target: str = "/") -> str:
 
 
 def logout_url(target: str = "/") -> str:
-    """The same target with IAP's cookie-clear mode appended."""
+    """The same target with IAP's cookie-clear mode appended.
+
+    Not a full sign-out: the Google session survives (see README).
+    """
     return _with_param(target, LOGOUT_QUERY)

@@ -28,6 +28,7 @@ module CruIap
         with_param(target, LOGIN_QUERY)
       end
 
+      # Not a full sign-out: the Google session survives (see README).
       # @param target [String] path or absolute URL to land on after sign-out
       # @return [String] the same target with IAP's cookie-clear mode appended
       def logout(target = "/")
